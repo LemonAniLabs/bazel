@@ -141,8 +141,6 @@ public class WorkspaceFactory {
 
   /**
    * Parses the given WORKSPACE file without resolving skylark imports.
-   *
-   * <p>Called by com.google.devtools.build.workspace.Resolver from //src/tools/generate_workspace.
    */
   public void parse(ParserInputSource source)
       throws BuildFileContainsErrorsException, InterruptedException {
@@ -183,6 +181,7 @@ public class WorkspaceFactory {
   private void execute(BuildFileAST ast, @Nullable Map<String, Extension> importedExtensions,
       StoredEventHandler localReporter)
       throws InterruptedException {
+    // Note that this Skylark environment ignores command line flags.
     Environment.Builder environmentBuilder =
         Environment.builder(mutability)
             .setGlobals(BazelLibrary.GLOBALS)
@@ -217,7 +216,7 @@ public class WorkspaceFactory {
     // each workspace file.
     ImmutableMap.Builder<String, Object> bindingsBuilder = ImmutableMap.builder();
     Frame globals = workspaceEnv.getGlobals();
-    for (String s : globals.getDirectVariableNames()) {
+    for (String s : globals.getBindings().keySet()) {
       Object o = globals.get(s);
       if (!isAWorkspaceFunction(s, o)) {
         bindingsBuilder.put(s, o);
@@ -225,6 +224,7 @@ public class WorkspaceFactory {
     }
     variableBindings = bindingsBuilder.build();
 
+    builder.addPosts(localReporter.getPosts());
     builder.addEvents(localReporter.getEvents());
     if (localReporter.hasErrors()) {
       builder.setContainsErrors();
@@ -256,6 +256,7 @@ public class WorkspaceFactory {
     this.parentImportMap = importMap;
     builder.setWorkspaceName(aPackage.getWorkspaceName());
     // Transmit the content of the parent package to the new package builder.
+    builder.addPosts(aPackage.getPosts());
     builder.addEvents(aPackage.getEvents());
     if (aPackage.containsErrors()) {
       builder.setContainsErrors();

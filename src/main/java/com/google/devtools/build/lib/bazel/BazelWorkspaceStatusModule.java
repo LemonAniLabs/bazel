@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.actions.ExecutionStrategy;
 import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BuildInfo;
+import com.google.devtools.build.lib.analysis.BuildInfoEvent;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction.Key;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction.KeyType;
@@ -40,6 +41,7 @@ import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.exec.ExecutorBuilder;
 import com.google.devtools.build.lib.runtime.BlazeModule;
+import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.runtime.GotOptionsEvent;
@@ -219,6 +221,11 @@ public class BazelWorkspaceStatusModule extends BlazeModule {
         }
         volatileMap.put(BuildInfo.BUILD_TIMESTAMP, Long.toString(System.currentTimeMillis()));
 
+        Map<String, String> overallMap = new TreeMap<>();
+        overallMap.putAll(volatileMap);
+        overallMap.putAll(stableMap);
+        actionExecutionContext.getExecutor().getEventBus().post(new BuildInfoEvent(overallMap));
+
         // Only update the stableStatus contents if they are different than what we have on disk.
         // This is to preserve the old file's mtime so that we do not generate an unnecessary dirty
         // file on each incremental build.
@@ -364,7 +371,7 @@ public class BazelWorkspaceStatusModule extends BlazeModule {
   private WorkspaceStatusAction.Options options;
 
   @Override
-  public void beforeCommand(Command command, CommandEnvironment env) {
+  public void beforeCommand(CommandEnvironment env) {
     this.env = env;
     env.getEventBus().register(this);
   }
@@ -388,7 +395,8 @@ public class BazelWorkspaceStatusModule extends BlazeModule {
   }
 
   @Override
-  public void workspaceInit(BlazeDirectories directories, WorkspaceBuilder builder) {
+  public void workspaceInit(
+      BlazeRuntime runtime, BlazeDirectories directories, WorkspaceBuilder builder) {
     builder.setWorkspaceStatusActionFactory(new BazelStatusActionFactory());
   }
 

@@ -29,7 +29,6 @@ import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
-import com.google.devtools.build.lib.analysis.SkylarkProviders;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.Util;
@@ -38,6 +37,8 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.packages.ClassObjectConstructor;
+import com.google.devtools.build.lib.packages.SkylarkClassObject;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
@@ -216,14 +217,12 @@ public class JavaCommon {
     return javaArtifacts;
   }
 
-  public ImmutableList<Artifact> getProcessorClasspathJars() {
-    Set<Artifact> processorClasspath = new LinkedHashSet<>();
+  public NestedSet<Artifact> getProcessorClasspathJars() {
+    NestedSetBuilder<Artifact> builder = NestedSetBuilder.naiveLinkOrder();
     for (JavaPluginInfoProvider plugin : activePlugins) {
-      for (Artifact classpathJar : plugin.getProcessorClasspath()) {
-        processorClasspath.add(classpathJar);
-      }
+      builder.addTransitive(plugin.getProcessorClasspath());
     }
-    return ImmutableList.copyOf(processorClasspath);
+    return builder.build();
   }
 
   public ImmutableList<String> getProcessorClassNames() {
@@ -291,31 +290,13 @@ public class JavaCommon {
    */
   public NestedSet<Artifact> collectCompileTimeDependencyArtifacts(@Nullable Artifact outDeps) {
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    Set<JavaCompilationArgsProvider> addedProviders = new LinkedHashSet<>();
     if (outDeps != null) {
       builder.add(outDeps);
     }
 
-    for (JavaCompilationArgsProvider provider : AnalysisUtils.getProviders(
-        getExports(ruleContext), JavaCompilationArgsProvider.class)) {
+    for (JavaCompilationArgsProvider provider : JavaProvider.getProvidersFromListOfTargets(
+        JavaCompilationArgsProvider.class, getExports(ruleContext))) {
       builder.addTransitive(provider.getCompileTimeJavaDependencyArtifacts());
-      addedProviders.add(provider);
-    }
-
-    // We also check for artifacts in the JavaProvider of the dependencies (might exist when
-    // information is passed from a custom Skylark Java rule).
-    for (SkylarkProviders skylarkProviders : AnalysisUtils.getProviders(
-        getExports(ruleContext), SkylarkProviders.class)) {
-      JavaProvider javaProvider =
-          (JavaProvider) skylarkProviders.getDeclaredProvider(JavaProvider.JAVA_PROVIDER.getKey());
-      if (javaProvider != null) {
-        JavaCompilationArgsProvider compilationArgsProvider =
-            javaProvider.getProvider(JavaCompilationArgsProvider.class);
-        if (!addedProviders.contains(compilationArgsProvider)) {
-          builder.addTransitive((javaProvider.getProvider(JavaCompilationArgsProvider.class))
-                  .getCompileTimeJavaDependencyArtifacts());
-        }
-      }
     }
 
     return builder.build();
@@ -730,7 +711,7 @@ public class JavaCommon {
     genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenClassJars());
     genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenSourceJars());
 
-    javaSkylarkApiProvider.setGenJarsProvider1(genJarsProvider);
+    javaSkylarkApiProvider.setGenJarsProvider(genJarsProvider);
     builder
         .add(JavaGenJarsProvider.class, genJarsProvider)
         .addOutputGroup(JavaSemantics.GENERATED_JARS_OUTPUT_GROUP, genJarsBuilder.build());
@@ -851,6 +832,15 @@ public class JavaCommon {
       Class<P> provider) {
     return AnalysisUtils.getProviders(getDependencies(), provider);
   }
+
+  /**
+   * Gets all the deps that implement a particular provider.
+   */
+  public final <P extends SkylarkClassObject> Iterable<P> getDependencies(
+      ClassObjectConstructor.Key provider, Class<P> resultClass) {
+    return AnalysisUtils.getProviders(getDependencies(), provider, resultClass);
+  }
+
 
   /**
    * Returns true if and only if this target has the neverlink attribute set to

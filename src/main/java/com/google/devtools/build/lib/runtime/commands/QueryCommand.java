@@ -38,6 +38,7 @@ import com.google.devtools.build.lib.runtime.BlazeCommand;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -56,6 +57,7 @@ import java.util.Set;
  */
 @Command(name = "query",
          options = { PackageCacheOptions.class,
+                     SkylarkSemanticsOptions.class,
                      QueryOptions.class },
          help = "resource:query.txt",
          shortDescription = "Executes a dependency graph query.",
@@ -66,7 +68,7 @@ import java.util.Set;
 public final class QueryCommand implements BlazeCommand {
 
   @Override
-  public void editOptions(CommandEnvironment env, OptionsParser optionsParser) { }
+  public void editOptions(OptionsParser optionsParser) { }
 
   /**
    * Exit codes:
@@ -137,7 +139,6 @@ public final class QueryCommand implements BlazeCommand {
           queryOptions.universeScope,
           queryOptions.loadingPhaseThreads,
           settings);
-    // 1. Parse and transform query:
     QueryExpression expr;
     try {
       expr = QueryExpression.parse(query, queryEnv);
@@ -152,8 +153,6 @@ public final class QueryCommand implements BlazeCommand {
     ThreadSafeOutputFormatterCallback<Target> callback;
     if (streamResults) {
       disableAnsiCharactersFiltering(env);
-
-      // 2. Evaluate expression:
       StreamedFormatter streamedFormatter = ((StreamedFormatter) formatter);
       streamedFormatter.setOptions(
           queryOptions,
@@ -203,8 +202,6 @@ public final class QueryCommand implements BlazeCommand {
     env.getEventBus().post(new NoBuildEvent());
     if (!streamResults) {
       disableAnsiCharactersFiltering(env);
-
-      // 3. Output results:
       try {
         Set<Target> targets = ((AggregateAllOutputFormatterCallback<Target>) callback).getResult();
         QueryOutputUtils.output(

@@ -14,8 +14,6 @@
 
 package com.google.devtools.build.lib.syntax;
 
-import com.google.devtools.build.lib.events.Location;
-
 /** Syntax node for an augmented assignment statement. */
 public final class AugmentedAssignmentStatement extends Statement {
 
@@ -26,9 +24,9 @@ public final class AugmentedAssignmentStatement extends Statement {
   private final Expression expression;
 
   /** Constructs an augmented assignment: "lvalue ::= value". */
-  AugmentedAssignmentStatement(Operator operator, Expression lhs, Expression expression) {
+  public AugmentedAssignmentStatement(Operator operator, LValue lvalue, Expression expression) {
     this.operator = operator;
-    this.lvalue = new LValue(lhs);
+    this.lvalue = lvalue;
     this.expression = expression;
   }
 
@@ -54,8 +52,7 @@ public final class AugmentedAssignmentStatement extends Statement {
 
   @Override
   void doExec(Environment env) throws EvalException, InterruptedException {
-    Location loc = getLocation();
-    lvalue.assign(env, loc, expression, operator);
+    lvalue.assign(env, getLocation(), expression, operator);
   }
 
   @Override

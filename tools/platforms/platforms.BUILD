@@ -28,7 +28,7 @@ constraint_value(
 )
 
 constraint_value(
-    name = "x390x",
+    name = "s390x",
     constraint_setting = ":cpu",
 )
 
@@ -54,3 +54,6 @@ constraint_value(
     name = "windows",
     constraint_setting = ":os",
 )
+
+# A default platform with nothing defined.
+platform(name = "default_platform")

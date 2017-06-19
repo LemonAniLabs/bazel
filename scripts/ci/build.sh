@@ -52,17 +52,6 @@ else
   }
 fi
 
-# Returns the full release name in the form NAME(rcRC)?
-function get_full_release_name() {
-  local rc=$(get_release_candidate)
-  local name=$(get_release_name)
-  if [ -n "${rc}" ]; then
-    echo "${name}rc${rc}"
-  else
-    echo "${name}"
-  fi
-}
-
 function setup_android_repositories() {
   if [ ! -f WORKSPACE.bak ] && [ -n "${ANDROID_SDK_PATH-}" ]; then
     cp WORKSPACE WORKSPACE.bak
@@ -75,26 +64,14 @@ function setup_android_repositories() {
 android_sdk_repository(
     name = "androidsdk",
     path = "${ANDROID_SDK_PATH}",
-    build_tools_version = "${ANDROID_SDK_BUILD_TOOLS_VERSION:-22.0.1}",
-    api_level = ${ANDROID_SDK_API_LEVEL:-21},
 )
 
-bind(
-    name = "android_sdk_for_testing",
-    actual = "@androidsdk//:files",
-)
 EOF
     if [ -n "${ANDROID_NDK_PATH-}" ]; then
       cat >>WORKSPACE <<EOF
 android_ndk_repository(
     name = "androidndk",
     path = "${ANDROID_NDK_PATH}",
-    api_level = ${ANDROID_NDK_API_LEVEL:-21},
-)
-
-bind(
-    name = "android_ndk_for_testing",
-    actual = "@androidndk//:files",
 )
 EOF
     fi
@@ -142,7 +119,13 @@ function bazel_build() {
     # Copy the results to the output directory
     mkdir -p $1/packages
     cp bazel-bin/src/bazel $1/bazel
-    cp bazel-bin/scripts/packages/install.sh $1/bazel-${release_label}-installer.sh
+    # The version with a bundled JDK may not exist on all platforms.
+    if [ "${JAVA_VERSION}" = "1.8" -a -e "bazel-bin/scripts/packages/with-jdk/install.sh" ]; then
+      cp bazel-bin/scripts/packages/with-jdk/install.sh $1/bazel-${release_label}-installer.sh
+      cp bazel-bin/scripts/packages/without-jdk/install.sh $1/bazel-${release_label}-without-jdk-installer.sh
+    else
+      cp bazel-bin/scripts/packages/without-jdk/install.sh $1/bazel-${release_label}-installer.sh
+    fi
     if [ "$PLATFORM" = "linux" ]; then
       cp bazel-bin/scripts/packages/debian/bazel-debian.deb $1/bazel_${release_label}.deb
       cp -f bazel-genfiles/scripts/packages/debian/bazel.dsc $1/bazel.dsc
@@ -151,7 +134,7 @@ function bazel_build() {
         cp bazel-genfiles/bazel-distfile.zip $1/bazel-${release_label}-dist.zip
       fi
     fi
-    cp bazel-genfiles/site/jekyll-tree.tar $1/www.bazel.build.tar
+    cp bazel-genfiles/site/jekyll-tree.tar $1/docs.bazel.build.tar
     cp bazel-bin/src/tools/benchmark/webapp/site.tar $1/perf.bazel.build.tar.nobuild
     cp bazel-genfiles/scripts/packages/README.md $1/README.md
   fi
@@ -301,7 +284,7 @@ function release_to_gcs() {
     return 1
   fi
   if [ -n "${release_name}" ]; then
-    local release_path="${release_name}"
+    local release_path="${release_name}/release"
     if [ -n "${rc}" ]; then
       release_path="${release_name}/rc${rc}"
     fi

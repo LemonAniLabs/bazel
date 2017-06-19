@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.common.base.Joiner;
 import com.google.common.io.Files;
+import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -28,7 +29,6 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Tar
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
 import com.google.protobuf.TextFormat;
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.junit.After;
 import org.junit.Before;
@@ -51,6 +51,7 @@ public class TextFormatFileTransportTest {
   @Mock public BuildEvent buildEvent;
 
   @Mock public PathConverter pathConverter;
+  @Mock public ArtifactGroupNamer artifactGroupNamer;
 
   @Before
   public void initMocks() {
@@ -63,7 +64,7 @@ public class TextFormatFileTransportTest {
   }
 
   @Test
-  public void testCreatesFileAndWritesProtoTextFormat() throws IOException {
+  public void testCreatesFileAndWritesProtoTextFormat() throws Exception {
     File output = tmp.newFile();
 
     BuildEventStreamProtos.BuildEvent started =
@@ -73,21 +74,21 @@ public class TextFormatFileTransportTest {
     when(buildEvent.asStreamProto(Matchers.<BuildEventConverters>any())).thenReturn(started);
     TextFormatFileTransport transport =
         new TextFormatFileTransport(output.getAbsolutePath(), pathConverter);
-    transport.sendBuildEvent(buildEvent);
+    transport.sendBuildEvent(buildEvent, artifactGroupNamer);
 
     BuildEventStreamProtos.BuildEvent progress =
         BuildEventStreamProtos.BuildEvent.newBuilder().setProgress(Progress.newBuilder()).build();
     when(buildEvent.asStreamProto(Matchers.<BuildEventConverters>any())).thenReturn(progress);
-    transport.sendBuildEvent(buildEvent);
+    transport.sendBuildEvent(buildEvent, artifactGroupNamer);
 
     BuildEventStreamProtos.BuildEvent completed =
         BuildEventStreamProtos.BuildEvent.newBuilder()
             .setCompleted(TargetComplete.newBuilder().setSuccess(true))
             .build();
     when(buildEvent.asStreamProto(Matchers.<BuildEventConverters>any())).thenReturn(completed);
-    transport.sendBuildEvent(buildEvent);
+    transport.sendBuildEvent(buildEvent, artifactGroupNamer);
 
-    transport.close();
+    transport.close().get();
     String contents =
         trimLines(
             Joiner.on(System.lineSeparator())

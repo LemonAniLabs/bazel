@@ -32,9 +32,13 @@ import java.util.Set;
 
 /**
  * A helper class for transitive infos provided by Skylark rule implementations.
+ *
+ * DO NOT USE THIS CLASS to access Skylark providers.
+ * Use {@link ConfiguredTarget#get(SkylarkProviderIdentifier)} or
+ * {@link ConfiguredAspect#getProvider(SkylarkProviderIdentifier)}.
  */
 @Immutable
-public final class SkylarkProviders implements TransitiveInfoProvider {
+final class SkylarkProviders implements TransitiveInfoProvider {
   private final ImmutableMap<ClassObjectConstructor.Key, SkylarkClassObject>
       declaredProviders;
   private final ImmutableMap<String, Object> skylarkProviders;
@@ -59,6 +63,10 @@ public final class SkylarkProviders implements TransitiveInfoProvider {
    */
   public ImmutableCollection<String> getKeys() {
     return skylarkProviders.keySet();
+  }
+
+  public boolean isEmpty() {
+    return skylarkProviders.isEmpty() && declaredProviders.isEmpty();
   }
 
   /** Returns the keys for the declared providers. */
@@ -119,50 +127,43 @@ public final class SkylarkProviders implements TransitiveInfoProvider {
   /**
    * Merges skylark providers. The set of providers must be disjoint.
    *
-   * @param premergedProviders providers that has already been merged. They will
-   *        be put into the result as-is and their presence will be ignored among {@code providers}.
    * @param providers providers to merge {@code this} with.
    */
-  public static SkylarkProviders merge(
-      Map<String, Object> premergedProviders,
-      List<SkylarkProviders> providers)
+  public static SkylarkProviders merge(List<SkylarkProviders> providers)
       throws DuplicateException {
-    if (premergedProviders.size() == 0 && providers.size() == 0) {
+    if (providers.size() == 0) {
       return null;
     }
-    if (premergedProviders.size() == 0 && providers.size() == 1) {
+    if (providers.size() == 1) {
       return providers.get(0);
     }
 
     ImmutableMap<String, Object> skylarkProviders = mergeMaps(providers,
-        SKYLARK_PROVIDERS_MAP_FUNCTION,
-        premergedProviders);
+        SKYLARK_PROVIDERS_MAP_FUNCTION);
 
     ImmutableMap<ClassObjectConstructor.Key, SkylarkClassObject> declaredProviders =
-        mergeMaps(providers, DECLARED_PROVIDERS_MAP_FUNCTION,
-            ImmutableMap.<ClassObjectConstructor.Key, SkylarkClassObject>of());
+        mergeMaps(providers, DECLARED_PROVIDERS_MAP_FUNCTION);
 
     return new SkylarkProviders(skylarkProviders, declaredProviders);
   }
 
   private static <K, V> ImmutableMap<K, V> mergeMaps(List<SkylarkProviders> providers,
-      Function<SkylarkProviders, Map<K, V>> mapGetter, Map<K, V> premerged)
+      Function<SkylarkProviders, Map<K, V>> mapGetter)
       throws DuplicateException {
     Set<K> seenKeys = new HashSet<>();
     ImmutableMap.Builder<K, V> resultBuilder = ImmutableMap.builder();
-    resultBuilder.putAll(premerged);
     for (SkylarkProviders provider : providers) {
       Map<K, V> map = mapGetter.apply(provider);
       for (K key : map.keySet()) {
-        if (premerged.containsKey(key)) {
-          continue;
-        }
         if (!seenKeys.add(key)) {
           // TODO(dslomov): add better diagnostics.
           throw new DuplicateException("Provider " + key + " provided twice");
         }
 
-        resultBuilder.put(key, map.get(key));
+        V v = map.get(key);
+        if (v != null) {
+          resultBuilder.put(key, v);
+        }
       }
     }
     return resultBuilder.build();

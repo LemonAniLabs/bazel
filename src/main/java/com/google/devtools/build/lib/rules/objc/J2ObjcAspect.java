@@ -17,7 +17,6 @@ package com.google.devtools.build.lib.rules.objc;
 import static com.google.devtools.build.lib.packages.Attribute.ConfigurationTransition.HOST;
 import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.packages.BuildType.LABEL;
-import static com.google.devtools.build.lib.rules.objc.XcodeProductType.LIBRARY_STATIC;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 import com.google.common.base.Joiner;
@@ -87,7 +86,7 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
 
   private static final ImmutableList<Attribute> JAVA_DEPENDENT_ATTRIBUTES =
       ImmutableList.of(
-          new Attribute(":jre_lib", Mode.TARGET),
+          new Attribute("$jre_lib", Mode.TARGET),
           new Attribute("deps", Mode.TARGET),
           new Attribute("exports", Mode.TARGET),
           new Attribute("runtime_deps", Mode.TARGET));
@@ -96,24 +95,17 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
       ImmutableList.of(
           new Attribute("$protobuf_lib", Mode.TARGET), new Attribute("deps", Mode.TARGET));
 
-  private static final Label JRE_CORE_LIB =
-      Label.parseAbsoluteUnchecked("//third_party/java/j2objc:jre_core_lib");
-
-  private static final Label JRE_EMUL_LIB =
-      Label.parseAbsoluteUnchecked("//third_party/java/j2objc:jre_emul_lib");
-
   private static final String PROTO_SOURCE_FILE_BLACKLIST_ATTR = "$j2objc_proto_blacklist";
 
   /** Flags passed to J2ObjC proto compiler plugin. */
   protected static final ImmutableList<String> J2OBJC_PLUGIN_PARAMS =
       ImmutableList.of("file_dir_mapping", "generate_class_mappings");
 
-  private static final LateBoundLabel<BuildConfiguration> JRE_LIB =
-      new LateBoundLabel<BuildConfiguration>(JRE_CORE_LIB, J2ObjcConfiguration.class) {
+  private static final LateBoundLabel<BuildConfiguration> DEAD_CODE_REPORT =
+      new LateBoundLabel<BuildConfiguration>(J2ObjcConfiguration.class) {
     @Override
     public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
-      return configuration.getFragment(J2ObjcConfiguration.class).explicitJreDeps()
-          ? JRE_CORE_LIB : JRE_EMUL_LIB;
+      return configuration.getFragment(J2ObjcConfiguration.class).deadCodeReport().orNull();
     }
   };
 
@@ -186,10 +178,19 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
                 .value(
                     Label.parseAbsoluteUnchecked(
                         toolsRepository + "//third_party/java/j2objc:jre_emul.jar")))
-        .add(attr(":jre_lib", LABEL).value(JRE_LIB))
+        .add(
+            attr(":dead_code_report", LABEL)
+                .cfg(HOST)
+                .value(DEAD_CODE_REPORT))
+        .add(attr("$jre_lib", LABEL)
+            .value(
+                Label.parseAbsoluteUnchecked(
+                    toolsRepository + "//third_party/java/j2objc:jre_core_lib")))
         .add(
             attr("$protobuf_lib", LABEL)
-                .value(Label.parseAbsoluteUnchecked("//third_party/java/j2objc:proto_runtime")))
+                .value(
+                    Label.parseAbsoluteUnchecked(
+                        toolsRepository + "//third_party/java/j2objc:proto_runtime")))
         .add(
             attr("$xcrunwrapper", LABEL)
                 .cfg(HOST)
@@ -251,7 +252,6 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
       throws InterruptedException {
     ConfiguredAspect.Builder builder = new ConfiguredAspect.Builder(this, parameters, ruleContext);
     ObjcCommon common;
-    XcodeProvider xcodeProvider;
 
     if (!Iterables.isEmpty(j2ObjcSource.getObjcSrcs())) {
       common =
@@ -262,24 +262,16 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
               j2ObjcSource.getHeaderSearchPaths(),
               depAttributes);
 
-      xcodeProvider =
-          xcodeProvider(
-              ruleContext,
-              common,
-              j2ObjcSource.getObjcHdrs(),
-              j2ObjcSource.getHeaderSearchPaths(),
-              depAttributes);
-
       try {
         CcToolchainProvider ccToolchain =
             CppHelper.getToolchain(ruleContext, ":j2objc_cc_toolchain");
         FdoSupportProvider fdoSupport =
             CppHelper.getFdoSupport(ruleContext, ":j2objc_cc_toolchain");
-        CompilationSupport compilationSupport = CompilationSupport.createWithSelectedImplementation(
-            ruleContext,
-            ruleContext.getConfiguration(),
-            ObjcRuleClasses.j2objcIntermediateArtifacts(ruleContext),
-            CompilationAttributes.Builder.fromRuleContext(ruleContext).build());
+        CompilationSupport compilationSupport =
+            new CompilationSupport.Builder()
+                .setRuleContext(ruleContext)
+                .setIntermediateArtifacts(ObjcRuleClasses.j2objcIntermediateArtifacts(ruleContext))
+                .build();
 
         compilationSupport
             .registerCompileAndArchiveActions(
@@ -305,20 +297,12 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
               ImmutableList.<Artifact>of(),
               ImmutableList.<PathFragment>of(),
               depAttributes);
-      xcodeProvider =
-          xcodeProvider(
-              ruleContext,
-              common,
-              ImmutableList.<Artifact>of(),
-              ImmutableList.<PathFragment>of(),
-              depAttributes);
     }
 
     return builder
         .addProvider(
             exportedJ2ObjcMappingFileProvider(base, ruleContext, directJ2ObjcMappingFileProvider))
         .addProvider(common.getObjcProvider())
-        .addProvider(xcodeProvider)
         .build();
   }
 
@@ -542,6 +526,11 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
     Artifact bootclasspathJar = ruleContext.getPrerequisiteArtifact("$jre_emul_jar", Mode.HOST);
     argBuilder.add("-Xbootclasspath:" + bootclasspathJar.getExecPathString());
 
+    Artifact deadCodeReport = ruleContext.getPrerequisiteArtifact(":dead_code_report", Mode.HOST);
+    if (deadCodeReport != null) {
+      argBuilder.addExecPath("--dead-code-report", deadCodeReport);
+    }
+
     argBuilder.add("-d").addPath(j2ObjcSource.getObjcFilePath());
 
     NestedSet<Artifact> compileTimeJars =
@@ -580,6 +569,11 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
             .addOutputs(j2ObjcSource.getObjcHdrs())
             .addOutput(outputDependencyMappingFile)
             .addOutput(archiveSourceMappingFile);
+
+    if (deadCodeReport != null) {
+      transpilationAction.addInput(deadCodeReport);
+    }
+
     if (!experimentalJ2ObjcHeaderMap) {
       transpilationAction.addOutput(outputHeaderMappingFile);
     }
@@ -819,37 +813,5 @@ public class J2ObjcAspect extends NativeAspectClass implements ConfiguredAspectF
         .addIncludes(headerSearchPaths)
         .setIntermediateArtifacts(intermediateArtifacts)
         .build();
-  }
-
-  /**
-   * Sets up and returns an {@link XcodeProvider} object containing the J2ObjC-translated code.
-   *
-   */
-  static XcodeProvider xcodeProvider(RuleContext ruleContext, ObjcCommon common,
-      Iterable<Artifact> transpiledHeaders, Iterable<PathFragment> headerSearchPaths,
-      Iterable<Attribute> dependentAttributes) {
-    XcodeProvider.Builder xcodeProviderBuilder = new XcodeProvider.Builder();
-    XcodeSupport xcodeSupport = new XcodeSupport(ruleContext);
-    xcodeSupport.addXcodeSettings(xcodeProviderBuilder, common.getObjcProvider(), LIBRARY_STATIC);
-
-    for (Attribute dependentAttribute : dependentAttributes) {
-      if (ruleContext.attributes().has(dependentAttribute.getName(), BuildType.LABEL_LIST)
-          || ruleContext.attributes().has(dependentAttribute.getName(), BuildType.LABEL)) {
-        xcodeSupport.addDependencies(xcodeProviderBuilder, dependentAttribute);
-      }
-    }
-
-    if (!Iterables.isEmpty(transpiledHeaders)) {
-      xcodeProviderBuilder
-          .addUserHeaderSearchPaths(headerSearchPaths)
-          .addCopts(ruleContext.getFragment(ObjcConfiguration.class).getCopts())
-          .addHeaders(transpiledHeaders);
-    }
-
-    if (common.getCompilationArtifacts().isPresent()) {
-      xcodeProviderBuilder.setCompilationArtifacts(common.getCompilationArtifacts().get());
-    }
-
-    return xcodeProviderBuilder.build();
   }
 }

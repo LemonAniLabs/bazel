@@ -21,6 +21,7 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.java.JavaUtil;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -124,12 +125,34 @@ public abstract class ResourceContainer {
 
   /** Converts this container back into a builder to create a modified copy. */
   public abstract Builder toBuilder();
-  
+
   /**
-   * Returns a copy of this container with filtered resources. The original container is unchanged.
+   * Returns a copy of this container with filtered resources, or the original if no resources
+   * should be filtered. The original container is unchanged.
    */
-  public ResourceContainer filter(RuleContext ruleContext, ResourceFilter filter) {
-    return toBuilder().setResources(filter.filter(ruleContext, getResources())).build();
+  public ResourceContainer filter(RuleErrorConsumer ruleErrorConsumer, ResourceFilter filter) {
+    ImmutableList<Artifact> filteredResources = filter.filter(ruleErrorConsumer, getResources());
+
+    if (filteredResources.size() == getResources().size()) {
+      // No filtering was done; return this container
+      return this;
+    }
+
+    // If the resources were filtered, also filter the resource roots
+    ImmutableList.Builder<PathFragment> filteredResourcesRootsBuilder = ImmutableList.builder();
+    for (PathFragment resourceRoot : getResourcesRoots()) {
+      for (Artifact resource : filteredResources) {
+        if (resource.getRootRelativePath().startsWith(resourceRoot)) {
+          filteredResourcesRootsBuilder.add(resourceRoot);
+          break;
+        }
+      }
+    }
+
+    return toBuilder()
+        .setResources(filteredResources)
+        .setResourcesRoots(filteredResourcesRootsBuilder.build())
+        .build();
   }
 
   /** Creates a new builder with default values. */
@@ -181,7 +204,7 @@ public abstract class ResourceContainer {
           .setJavaSourceJar(
               ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_JAVA_SOURCE_JAR))
           .setJavaPackageFrom(JavaPackageSource.SOURCE_JAR_PATH)
-          .setManifestExported(getExportsManifest(ruleContext));
+          .setManifestExported(AndroidCommon.getExportsManifest(ruleContext));
     }
 
     /**
@@ -309,13 +332,6 @@ public abstract class ResourceContainer {
 
     private static boolean hasCustomPackage(RuleContext ruleContext) {
       return ruleContext.attributes().isAttributeValueExplicitlySpecified("custom_package");
-    }
-
-    private static boolean getExportsManifest(RuleContext ruleContext) {
-      // AndroidLibraryBaseRule has exports_manifest but AndroidBinaryBaseRule does not.
-      // ResourceContainers are built for both, so we must check if exports_manifest is present.
-      return ruleContext.attributes().has("exports_manifest", Type.BOOLEAN)
-          && ruleContext.attributes().get("exports_manifest", Type.BOOLEAN);
     }
 
     @Nullable

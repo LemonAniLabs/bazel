@@ -16,7 +16,7 @@ package com.google.devtools.build.lib.windows;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.devtools.build.lib.windows.WindowsFileSystem.SHORT_NAME_MATCHER;
-import static org.junit.Assert.assertSame;
+import static org.junit.Assert.fail;
 
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
@@ -39,7 +39,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -215,7 +214,7 @@ public class WindowsFileSystemTest {
         .isFalse();
     try {
       WindowsFileSystem.isJunction(new File(root, "non-existent"));
-      Assert.fail("expected failure");
+      fail("expected failure");
     } catch (IOException e) {
       assertThat(e.getMessage()).contains("cannot find");
     }
@@ -290,8 +289,8 @@ public class WindowsFileSystemTest {
     assertThat(p.getPathString()).endsWith(longPath);
     assertThat(p).isEqualTo(fs.getPath(scratchRoot).getRelative(shortPath));
     assertThat(p).isEqualTo(fs.getPath(scratchRoot).getRelative(longPath));
-    assertSame(p, fs.getPath(scratchRoot).getRelative(shortPath));
-    assertSame(p, fs.getPath(scratchRoot).getRelative(longPath));
+    assertThat(fs.getPath(scratchRoot).getRelative(shortPath)).isSameAs(p);
+    assertThat(fs.getPath(scratchRoot).getRelative(longPath)).isSameAs(p);
   }
 
   @Test
@@ -377,7 +376,7 @@ public class WindowsFileSystemTest {
     assertThat(fs.getPath(scratchRoot).createDirectory()).isTrue();
     // Create symlink with directory target, relative path.
     Path link1 = fs.getPath(scratchRoot).getRelative("link1");
-    fs.createSymbolicLink(link1, new PathFragment(".."));
+    fs.createSymbolicLink(link1, PathFragment.create(".."));
     // Create symlink with directory target, absolute path.
     Path link2 = fs.getPath(scratchRoot).getRelative("link2");
     fs.createSymbolicLink(link2, fs.getPath(scratchRoot).getRelative("link1").asFragment());
@@ -386,7 +385,7 @@ public class WindowsFileSystemTest {
     testUtil.scratchFile("bar.txt", "hello");
     // Create symlink with file target, relative path.
     Path link3 = fs.getPath(scratchRoot).getRelative("link3");
-    fs.createSymbolicLink(link3, new PathFragment("foo.txt"));
+    fs.createSymbolicLink(link3, PathFragment.create("foo.txt"));
     // Create symlink with file target, absolute path.
     Path link4 = fs.getPath(scratchRoot).getRelative("link4");
     fs.createSymbolicLink(link4, fs.getPath(scratchRoot).getRelative("bar.txt").asFragment());

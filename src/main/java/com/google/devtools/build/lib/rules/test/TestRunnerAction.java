@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.rules.test;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
@@ -25,7 +26,6 @@ import com.google.devtools.build.lib.actions.ActionInputHelper;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecException;
-import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
 import com.google.devtools.build.lib.actions.UserExecException;
 import com.google.devtools.build.lib.analysis.RunfilesSupplierImpl;
@@ -45,7 +45,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -63,7 +62,7 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   // Used for selecting subset of testcase / testmethods.
   private static final String TEST_BRIDGE_TEST_FILTER_ENV = "TESTBRIDGE_TEST_ONLY";
 
-  private static final String GUID = "94857c93-f11c-4cbc-8c1b-e0a281633f9e";
+  private static final String GUID = "cc41f9d0-47a6-11e7-8726-eb6ce83a8cc8";
 
   private final NestedSet<Artifact> runtime;
   private final BuildConfiguration configuration;
@@ -86,7 +85,6 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   private final PathFragment testInfrastructureFailure;
   private final PathFragment baseDir;
   private final Artifact coverageData;
-  private final Artifact microCoverageData;
   private final TestTargetProperties testProperties;
   private final TestTargetExecutionSettings executionSettings;
   private final int shardNum;
@@ -97,7 +95,12 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   // Mutable state related to test caching.
   private Boolean unconditionalExecution; // lazily initialized: null indicates unknown
 
-  private ImmutableMap<String, String> testEnv;
+  // Any extra environment variables (and values) added by the rule that created this action.
+  private final ImmutableMap<String, String> extraTestEnv;
+
+  // These are handled explicitly by the ActionCacheChecker and so don't have to be included in the
+  // cache key.
+  private final Iterable<String> requiredClientEnvVariables;
 
   private static ImmutableList<Artifact> list(Artifact... artifacts) {
     ImmutableList.Builder<Artifact> builder = ImmutableList.builder();
@@ -117,13 +120,13 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
    *     (no sharding). Otherwise, must be >= 0 and < totalShards.
    * @param runNumber test run number
    */
-  TestRunnerAction(ActionOwner owner,
+  TestRunnerAction(
+      ActionOwner owner,
       Iterable<Artifact> inputs,
       NestedSet<Artifact> runtime,   // Must be a subset of inputs
       Artifact testLog,
       Artifact cacheStatus,
       Artifact coverageArtifact,
-      Artifact microCoverageArtifact,
       TestTargetProperties testProperties,
       Map<String, String> extraTestEnv,
       TestTargetExecutionSettings executionSettings,
@@ -132,16 +135,17 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
       BuildConfiguration configuration,
       String workspaceName,
       boolean useTestRunner) {
-    super(owner, inputs,
+    super(
+        owner,
+        inputs,
         // Note that this action only cares about the runfiles, not the mapping.
         new RunfilesSupplierImpl(PathFragment.create("runfiles"), executionSettings.getRunfiles()),
-        list(testLog, cacheStatus, coverageArtifact, microCoverageArtifact));
+        list(testLog, cacheStatus, coverageArtifact));
     this.runtime = runtime;
     this.configuration = Preconditions.checkNotNull(configuration);
     this.testLog = testLog;
     this.cacheStatus = cacheStatus;
     this.coverageData = coverageArtifact;
-    this.microCoverageData = microCoverageArtifact;
     this.shardNum = shardNum;
     this.runNumber = runNumber;
     this.testProperties = Preconditions.checkNotNull(testProperties);
@@ -173,9 +177,10 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
     this.workspaceName = workspaceName;
     this.useTestRunner = useTestRunner;
 
-    Map<String, String> mergedTestEnv = new HashMap<>(configuration.getTestEnv());
-    mergedTestEnv.putAll(extraTestEnv);
-    this.testEnv = ImmutableMap.copyOf(mergedTestEnv);
+    this.extraTestEnv = ImmutableMap.copyOf(extraTestEnv);
+    this.requiredClientEnvVariables =
+        Iterables.concat(
+            configuration.getVariableShellEnvironment(), configuration.getInheritedTestEnv());
   }
 
   public BuildConfiguration getConfiguration() {
@@ -207,9 +212,6 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
     outputs.add(ActionInputHelper.fromPath(getUndeclaredOutputsAnnotationsPath()));
     if (isCoverageMode()) {
       outputs.add(getCoverageData());
-      if (isMicroCoverageMode()) {
-        outputs.add(getMicroCoverageData());
-      }
     }
     return outputs;
   }
@@ -218,11 +220,16 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   protected String computeKey() {
     Fingerprint f = new Fingerprint();
     f.addString(GUID);
-    f.addStrings(executionSettings.getArgs());
+    f.addStrings(executionSettings.getArgs().arguments());
     f.addString(executionSettings.getTestFilter() == null ? "" : executionSettings.getTestFilter());
     RunUnder runUnder = executionSettings.getRunUnder();
     f.addString(runUnder == null ? "" : runUnder.getValue());
-    f.addStringMap(getTestEnv());
+    f.addStringMap(extraTestEnv);
+    // TODO(ulfjack): It might be better for performance to hash the action and test envs in config,
+    // and only add a hash here.
+    f.addStringMap(configuration.getLocalShellEnvironment());
+    f.addStringMap(configuration.getTestEnv());
+    // The 'requiredClientEnvVariables' are handled by Skyframe and don't need to be added here.
     f.addString(testProperties.getSize().toString());
     f.addString(testProperties.getTimeout().toString());
     f.addStrings(testProperties.getTags());
@@ -307,7 +314,7 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   }
 
   @Override
-  public void actionCacheHit(Executor executor) {
+  public void actionCacheHit(ActionCachedContext executor) {
     unconditionalExecution = null;
     try {
       executor.getEventBus().post(
@@ -358,8 +365,6 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
 
     // We cannot use coverageData artifact since it may be null. Generate coverage name instead.
     execRoot.getRelative(baseDir.getChild(coveragePrefix + ".dat")).delete();
-    // We cannot use microcoverageData artifact since it may be null. Generate filename instead.
-    execRoot.getRelative(baseDir.getChild(coveragePrefix + ".micro.dat")).delete();
 
     // Delete files fetched from remote execution.
     execRoot.getRelative(baseDir.getChild("test.zip")).delete();
@@ -441,12 +446,6 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
       env.put("COVERAGE_MANIFEST", getCoverageManifest().getExecPathString());
       env.put("COVERAGE_DIR", getCoverageDirectory().getPathString());
       env.put("COVERAGE_OUTPUT_FILE", getCoverageData().getExecPathString());
-      if (isMicroCoverageMode()) {
-        env.put("MICROCOVERAGE_REQUESTED", "true");
-        env.put("MICROCOVERAGE_OUTPUT_FILE", getMicroCoverageData().getExecPathString());
-      } else {
-        env.put("MICROCOVERAGE_REQUESTED", "false");
-      }
     }
   }
 
@@ -487,8 +486,13 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   /**
    * Returns all environment variables which must be set in order to run this test.
    */
-  public Map<String, String> getTestEnv() {
-    return testEnv;
+  public Map<String, String> getExtraTestEnv() {
+    return extraTestEnv;
+  }
+
+  @Override
+  public Iterable<String> getClientEnvironmentVariables() {
+    return requiredClientEnvVariables;
   }
 
   public ResolvedPaths resolve(Path execRoot) {
@@ -573,18 +577,6 @@ public class TestRunnerAction extends AbstractAction implements NotifyOnActionCa
   /** Returns true if coverage data should be gathered. */
   public boolean isCoverageMode() {
     return coverageData != null;
-  }
-
-  /**
-   * @return microcoverage data artifact or null if code coverage was not requested.
-   */
-  @Nullable public Artifact getMicroCoverageData() {
-    return microCoverageData;
-  }
-
-  /** Returns true if micro-coverage data should be gathered. */
-  public boolean isMicroCoverageMode() {
-    return microCoverageData != null;
   }
 
   /**

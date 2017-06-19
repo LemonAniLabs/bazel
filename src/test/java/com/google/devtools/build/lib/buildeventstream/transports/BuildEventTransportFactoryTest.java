@@ -20,6 +20,7 @@ import static org.mockito.Mockito.when;
 import com.google.common.base.Function;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
+import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
@@ -28,6 +29,7 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventTransport;
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.Future;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -64,6 +66,7 @@ public class BuildEventTransportFactoryTest {
   @Mock public BuildEvent buildEvent;
 
   @Mock public PathConverter pathConverter;
+  @Mock public ArtifactGroupNamer artifactGroupNamer;
 
   @Before
   public void before() {
@@ -81,6 +84,7 @@ public class BuildEventTransportFactoryTest {
   public void testCreatesTextFormatFileTransport() throws IOException {
     File textFile = tmp.newFile();
     when(options.getBuildEventTextFile()).thenReturn(textFile.getAbsolutePath());
+    when(options.getBuildEventTextFilePathConversion()).thenReturn(true);
     when(options.getBuildEventBinaryFile()).thenReturn("");
     ImmutableSet<BuildEventTransport> transports =
         BuildEventTransportFactory.createFromOptions(options, pathConverter);
@@ -95,6 +99,7 @@ public class BuildEventTransportFactoryTest {
     File binaryFile = tmp.newFile();
     when(options.getBuildEventTextFile()).thenReturn("");
     when(options.getBuildEventBinaryFile()).thenReturn(binaryFile.getAbsolutePath());
+    when(options.getBuildEventBinaryFilePathConversion()).thenReturn(true);
     ImmutableSet<BuildEventTransport> transports =
         BuildEventTransportFactory.createFromOptions(options, pathConverter);
     assertThat(FluentIterable.from(transports).transform(GET_CLASS))
@@ -109,6 +114,8 @@ public class BuildEventTransportFactoryTest {
     File binaryFile = tmp.newFile();
     when(options.getBuildEventTextFile()).thenReturn(textFile.getAbsolutePath());
     when(options.getBuildEventBinaryFile()).thenReturn(binaryFile.getAbsolutePath());
+    when(options.getBuildEventBinaryFilePathConversion()).thenReturn(true);
+    when(options.getBuildEventTextFilePathConversion()).thenReturn(true);
     ImmutableSet<BuildEventTransport> transports =
         BuildEventTransportFactory.createFromOptions(options, pathConverter);
     assertThat(FluentIterable.from(transports).transform(GET_CLASS))
@@ -129,8 +136,9 @@ public class BuildEventTransportFactoryTest {
   private void sendEventsAndClose(BuildEvent event, Iterable<BuildEventTransport> transports)
       throws IOException{
     for (BuildEventTransport transport : transports) {
-      transport.sendBuildEvent(event);
-      transport.close();
+      transport.sendBuildEvent(event, artifactGroupNamer);
+      @SuppressWarnings({"unused", "nullness"})
+      Future<?> possiblyIgnoredError = transport.close();
     }
   }
 }

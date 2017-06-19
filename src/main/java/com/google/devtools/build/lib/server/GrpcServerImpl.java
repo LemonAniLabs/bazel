@@ -24,6 +24,7 @@ import com.google.common.util.concurrent.Uninterruptibles;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.runtime.BlazeCommandDispatcher.LockingMode;
 import com.google.devtools.build.lib.runtime.CommandExecutor;
+import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
 import com.google.devtools.build.lib.server.CommandProtos.CancelRequest;
 import com.google.devtools.build.lib.server.CommandProtos.CancelResponse;
 import com.google.devtools.build.lib.server.CommandProtos.PingRequest;
@@ -38,6 +39,8 @@ import com.google.devtools.build.lib.util.ThreadUtils;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
+import com.google.devtools.common.options.InvocationPolicyParser;
+import com.google.devtools.common.options.OptionsParsingException;
 import com.google.protobuf.ByteString;
 import io.grpc.Server;
 import io.grpc.StatusRuntimeException;
@@ -51,8 +54,10 @@ import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Exchanger;
@@ -525,15 +530,23 @@ public class GrpcServerImpl implements RPCServer {
   private IdleServerTasks idleServerTasks;
   private final int port;
   boolean serving;
+  private List<Path> filesToDeleteAtExit = new ArrayList<Path>();
 
   public GrpcServerImpl(CommandExecutor commandExecutor, Clock clock, int port,
       Path workspace, Path serverDirectory, int maxIdleSeconds) throws IOException {
+    Runtime.getRuntime().addShutdownHook(new Thread() {
+      @Override
+      public void run() {
+        shutdownHook();
+      }
+    });
+
     // server.pid was written in the C++ launcher after fork() but before exec() .
     // The client only accesses the pid file after connecting to the socket
     // which ensures that it gets the correct pid value.
     pidFile = serverDirectory.getRelative("server.pid.txt");
     pidInFile = new String(FileSystemUtils.readContentAsLatin1(pidFile));
-    deleteAtExit(pidFile, /*deleteParent=*/ false);
+    deleteAtExit(pidFile);
 
     this.commandExecutor = commandExecutor;
     this.clock = clock;
@@ -746,34 +759,38 @@ public class GrpcServerImpl implements RPCServer {
   private void writeServerFile(String name, String contents) throws IOException {
     Path file = serverDirectory.getChild(name);
     FileSystemUtils.writeContentAsLatin1(file, contents);
-    deleteAtExit(file, false);
+    deleteAtExit(file);
   }
 
   protected void disableShutdownHooks() {
     runShutdownHooks.set(false);
   }
 
+  private void shutdownHook() {
+    if (!runShutdownHooks.get()) {
+      return;
+    }
+
+    List<Path> files;
+    synchronized (filesToDeleteAtExit) {
+      files = new ArrayList<>(filesToDeleteAtExit);
+    }
+    for (Path path : files) {
+      try {
+        path.delete();
+      } catch (IOException e) {
+        printStack(e);
+      }
+    }
+  }
+
   /**
    * Schedule the specified file for (attempted) deletion at JVM exit.
    */
-  protected static void deleteAtExit(final Path path, final boolean deleteParent) {
-    Runtime.getRuntime().addShutdownHook(new Thread() {
-        @Override
-        public void run() {
-          if (!runShutdownHooks.get()) {
-            return;
-          }
-
-          try {
-            path.delete();
-            if (deleteParent) {
-              path.getParentDirectory().delete();
-            }
-          } catch (IOException e) {
-            printStack(e);
-          }
-        }
-      });
+  protected void deleteAtExit(final Path path) {
+    synchronized (filesToDeleteAtExit) {
+      filesToDeleteAtExit.add(path);
+    }
   }
 
   static void printStack(IOException e) {
@@ -840,14 +857,20 @@ public class GrpcServerImpl implements RPCServer {
           new RpcOutputStream(command.id, responseCookie, StreamType.STDOUT, sink),
           new RpcOutputStream(command.id, responseCookie, StreamType.STDERR, sink));
 
-      exitCode =
-          commandExecutor.exec(
-              args.build(),
-              rpcOutErr,
-              request.getBlockForLock() ? LockingMode.WAIT : LockingMode.ERROR_OUT,
-              request.getClientDescription(),
-              clock.currentTimeMillis());
-
+      try {
+        InvocationPolicy policy = InvocationPolicyParser.parsePolicy(request.getInvocationPolicy());
+        exitCode =
+            commandExecutor.exec(
+                policy,
+                args.build(),
+                rpcOutErr,
+                request.getBlockForLock() ? LockingMode.WAIT : LockingMode.ERROR_OUT,
+                request.getClientDescription(),
+                clock.currentTimeMillis());
+      } catch (OptionsParsingException e) {
+        rpcOutErr.printErrLn(e.getMessage());
+        exitCode = ExitCode.COMMAND_LINE_ERROR.getNumericExitCode();
+      }
     } catch (InterruptedException e) {
       exitCode = ExitCode.INTERRUPTED.getNumericExitCode();
       commandId = ""; // The default value, the client will ignore it

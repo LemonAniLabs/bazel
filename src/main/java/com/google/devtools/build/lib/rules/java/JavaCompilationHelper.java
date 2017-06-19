@@ -22,7 +22,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
+import com.google.devtools.build.lib.actions.ExecutionRequirements;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -33,10 +33,13 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
+import com.google.devtools.build.lib.collect.ImmutableIterable;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector;
+import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -71,6 +74,7 @@ public final class JavaCompilationHelper {
   private final ImmutableList<Artifact> additionalJavaBaseInputs;
 
   private static final String DEFAULT_ATTRIBUTES_SUFFIX = "";
+  private static final PathFragment JAVAC = PathFragment.create("_javac");
 
   public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
       ImmutableList<String> javacOpts, JavaTargetAttributes.Builder attributes,
@@ -202,7 +206,7 @@ public final class JavaCompilationHelper {
     builder.setAdditionalOutputs(attributes.getAdditionalOutputs());
     builder.setMetadata(outputMetadata);
     builder.setInstrumentationJars(jacocoInstrumentation);
-    builder.addSourceFiles(attributes.getSourceFiles());
+    builder.setSourceFiles(attributes.getSourceFiles());
     builder.addSourceJars(attributes.getSourceJars());
     builder.setJavacOpts(customJavacOpts);
     builder.setJavacJvmOpts(customJavacJvmOpts);
@@ -211,22 +215,26 @@ public final class JavaCompilationHelper {
     builder.setSourceGenDirectory(sourceGenDir(classJar));
     builder.setTempDirectory(tempDir(classJar));
     builder.setClassDirectory(classDir(classJar));
-    builder.addProcessorPaths(attributes.getProcessorPath());
+    builder.setProcessorPaths(attributes.getProcessorPath());
     builder.addProcessorNames(attributes.getProcessorNames());
     builder.addProcessorFlags(attributes.getProcessorFlags());
     builder.setStrictJavaDeps(attributes.getStrictJavaDeps());
     builder.setDirectJars(attributes.getDirectJars());
-    builder.addCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
+    builder.setCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
     builder.setRuleKind(attributes.getRuleKind());
     builder.setTargetLabel(
         attributes.getTargetLabel() == null
             ? ruleContext.getLabel() : attributes.getTargetLabel());
+    AttributeMap attributeMap = ruleContext.attributes();
+    if (attributeMap.has("testonly", Type.BOOLEAN)) {
+      builder.setTestOnly(attributeMap.get("testonly", Type.BOOLEAN));
+    }
     getAnalysisEnvironment().registerAction(builder.build());
   }
 
   private ImmutableMap<String, String> getExecutionInfo() {
     if (javaToolchain.getJavacSupportsWorkers()) {
-      return ImmutableMap.of("supports-workers", "1");
+      return ExecutionRequirements.WORKER_MODE_ENABLED;
     }
     return ImmutableMap.of();
   }
@@ -353,14 +361,14 @@ public final class JavaCompilationHelper {
     JavaTargetAttributes attributes = getAttributes();
     JavaHeaderCompileAction.Builder builder =
         new JavaHeaderCompileAction.Builder(getRuleContext());
-    builder.addSourceFiles(attributes.getSourceFiles());
+    builder.setSourceFiles(attributes.getSourceFiles());
     builder.addSourceJars(attributes.getSourceJars());
     builder.setClasspathEntries(attributes.getCompileTimeClassPath());
-    builder.addAllBootclasspathEntries(getBootclasspathOrDefault());
-    builder.addAllExtClasspathEntries(getExtdirInputs());
+    builder.setBootclasspathEntries(
+        ImmutableIterable.from(Iterables.concat(getBootclasspathOrDefault(), getExtdirInputs())));
 
     // only run API-generating annotation processors during header compilation
-    builder.addProcessorPaths(attributes.getApiGeneratingProcessorPath());
+    builder.setProcessorPaths(attributes.getApiGeneratingProcessorPath());
     builder.addProcessorNames(attributes.getApiGeneratingProcessorNames());
     builder.addProcessorFlags(attributes.getProcessorFlags());
     builder.setJavacOpts(getJavacOpts());
@@ -368,7 +376,7 @@ public final class JavaCompilationHelper {
     builder.setOutputJar(headerJar);
     builder.setOutputDepsProto(headerDeps);
     builder.setStrictJavaDeps(attributes.getStrictJavaDeps());
-    builder.addCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
+    builder.setCompileTimeDependencyArtifacts(attributes.getCompileTimeDependencyArtifacts());
     builder.setDirectJars(attributes.getDirectJars());
     builder.setRuleKind(attributes.getRuleKind());
     builder.setTargetLabel(attributes.getTargetLabel());
@@ -456,7 +464,6 @@ public final class JavaCompilationHelper {
                         .add("--temp_dir")
                         .addPath(tempDir(genClassJar))
                         .build())
-                .useParameterFile(ParameterFileType.SHELL_QUOTED)
                 .setProgressMessage("Building genclass jar " + genClassJar.prettyPrint())
                 .setMnemonic("JavaSourceJar")
                 .build(getRuleContext()));
@@ -565,7 +572,7 @@ public final class JavaCompilationHelper {
   private PathFragment workDir(Artifact outputJar, String suffix) {
     String basename = FileSystemUtils.removeExtension(outputJar.getExecPath().getBaseName());
     return getConfiguration().getBinDirectory(ruleContext.getRule().getRepository()).getExecPath()
-        .getRelative(ruleContext.getUniqueDirectory("_javac"))
+        .getRelative(ruleContext.getUniqueDirectory(JAVAC))
         .getRelative(basename + suffix);
   }
 

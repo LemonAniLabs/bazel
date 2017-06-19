@@ -58,8 +58,8 @@ import java.util.TreeMap;
  */
 public final class RuleConfiguredTargetBuilder {
   private final RuleContext ruleContext;
-  private final TransitiveInfoProviderMap.Builder providersBuilder =
-      TransitiveInfoProviderMap.builder();
+  private final TransitiveInfoProviderMapBuilder providersBuilder =
+      new TransitiveInfoProviderMapBuilder();
   private final ImmutableMap.Builder<String, Object> skylarkProviders = ImmutableMap.builder();
   private final ImmutableMap.Builder<ClassObjectConstructor.Key, SkylarkClassObject>
       skylarkDeclaredProviders = ImmutableMap.builder();
@@ -92,7 +92,6 @@ public final class RuleConfiguredTargetBuilder {
         getFilesToRun(runfilesSupport, filesToBuild), runfilesSupport, executable);
     addProvider(new FileProvider(filesToBuild));
     addProvider(filesToRunProvider);
-    addSkylarkTransitiveInfo(FilesToRunProvider.SKYLARK_NAME, filesToRunProvider);
 
     if (runfilesSupport != null) {
       // If a binary is built, build its runfiles, too
@@ -133,7 +132,6 @@ public final class RuleConfiguredTargetBuilder {
 
       OutputGroupProvider outputGroupProvider = new OutputGroupProvider(outputGroups.build());
       addProvider(OutputGroupProvider.class, outputGroupProvider);
-      addSkylarkTransitiveInfo(OutputGroupProvider.SKYLARK_NAME, outputGroupProvider);
     }
 
     TransitiveInfoProviderMap providers = providersBuilder.build();
@@ -142,17 +140,17 @@ public final class RuleConfiguredTargetBuilder {
     return new RuleConfiguredTarget(
         ruleContext,
         providers,
-        new SkylarkProviders(skylarkProviders.build(), skylarkDeclaredProviders.build()));
+        skylarkProviders.build(), skylarkDeclaredProviders.build());
   }
 
   /** Adds skylark providers from a skylark provider registry, and checks for collisions. */
   private void addRegisteredProvidersToSkylarkProviders(TransitiveInfoProviderMap providers) {
     Map<String, Object> nativeSkylarkProviders = new HashMap<>();
-    for (Map.Entry<Class<? extends TransitiveInfoProvider>, TransitiveInfoProvider> entry :
-        providers.entrySet()) {
-      if (ruleContext.getSkylarkProviderRegistry().containsValue(entry.getKey())) {
-        String skylarkName = ruleContext.getSkylarkProviderRegistry().inverse().get(entry.getKey());
-        nativeSkylarkProviders.put(skylarkName, entry.getValue());
+    for (int i = 0; i < providers.getProviderCount(); ++i) {
+      Class<? extends TransitiveInfoProvider> providerClass = providers.getProviderClassAt(i);
+      if (ruleContext.getSkylarkProviderRegistry().containsValue(providerClass)) {
+        String skylarkName = ruleContext.getSkylarkProviderRegistry().inverse().get(providerClass);
+        nativeSkylarkProviders.put(skylarkName, providers.getProviderAt(i));
       }
     }
     try {
@@ -163,16 +161,16 @@ public final class RuleConfiguredTargetBuilder {
   }
 
   /**
-   * Like getFilesToBuild(), except that it also includes the runfiles middleman, if any.
-   * Middlemen are expanded in the SpawnStrategy or by the Distributor.
+   * Like getFilesToBuild(), except that it also includes the runfiles middleman, if any. Middlemen
+   * are expanded in the SpawnStrategy or by the Distributor.
    */
-  private ImmutableList<Artifact> getFilesToRun(
+  private NestedSet<Artifact> getFilesToRun(
       RunfilesSupport runfilesSupport, NestedSet<Artifact> filesToBuild) {
     if (runfilesSupport == null) {
-      return ImmutableList.copyOf(filesToBuild);
+      return filesToBuild;
     } else {
-      ImmutableList.Builder<Artifact> allFilesToBuild = ImmutableList.builder();
-      allFilesToBuild.addAll(filesToBuild);
+      NestedSetBuilder<Artifact> allFilesToBuild = NestedSetBuilder.stableOrder();
+      allFilesToBuild.addTransitive(filesToBuild);
       allFilesToBuild.add(runfilesSupport.getRunfilesMiddleman());
       return allFilesToBuild.build();
     }
@@ -295,6 +293,9 @@ public final class RuleConfiguredTargetBuilder {
    * Adds a "declared provider" defined in Skylark to the rule.
    * Use this method for declared providers defined in Skyark.
    *
+   * Has special handling for {@link OutputGroupProvider}: that provider is not added
+   * from Skylark directly, instead its outpuyt groups are added.
+   *
    * Use {@link #addNativeDeclaredProvider(SkylarkClassObject)} in definitions of
    * native rules.
    */
@@ -305,7 +306,14 @@ public final class RuleConfiguredTargetBuilder {
       throw new EvalException(constructor.getLocation(),
           "All providers must be top level values");
     }
-    skylarkDeclaredProviders.put(constructor.getKey(), provider);
+    if (OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey().equals(constructor.getKey())) {
+      OutputGroupProvider outputGroupProvider = (OutputGroupProvider) provider;
+      for (String outputGroup : outputGroupProvider) {
+        addOutputGroup(outputGroup, outputGroupProvider.getOutputGroup(outputGroup));
+      }
+    } else {
+      skylarkDeclaredProviders.put(constructor.getKey(), provider);
+    }
     return this;
   }
 

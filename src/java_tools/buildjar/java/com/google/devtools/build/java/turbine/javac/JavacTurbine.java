@@ -108,7 +108,6 @@ public class JavacTurbine implements AutoCloseable {
 
   private static final int ZIPFILE_BUFFER_SIZE = 1024 * 16;
 
-  private static final Joiner CLASSPATH_JOINER = Joiner.on(':');
 
   private final PrintWriter out;
   private final TurbineOptions turbineOptions;
@@ -176,21 +175,22 @@ public class JavacTurbine implements AutoCloseable {
     if (sources.isEmpty()) {
       // accept compilations with an empty source list for compatibility with JavaBuilder
       emitClassJar(Paths.get(turbineOptions.outputFile()), ImmutableMap.of());
-      dependencyModule.emitDependencyInformation(/*classpath=*/ "", /*successful=*/ true);
+      dependencyModule.emitDependencyInformation(
+          /*classpath=*/ ImmutableList.of(), /*successful=*/ true);
       return Result.OK_WITH_REDUCED_CLASSPATH;
     }
 
     Result result = Result.ERROR;
-    JavacTurbineCompileResult compileResult;
-    List<String> actualClasspath;
+    JavacTurbineCompileResult compileResult = null;
+    ImmutableList<String> actualClasspath = ImmutableList.of();
 
-    List<String> originalClasspath = turbineOptions.classPath();
-    List<String> compressedClasspath =
+    ImmutableList<String> originalClasspath = turbineOptions.classPath();
+    ImmutableList<String> compressedClasspath =
         dependencyModule.computeStrictClasspath(turbineOptions.classPath());
 
     requestBuilder.setStrictDepsPlugin(new StrictJavaDepsPlugin(dependencyModule));
 
-    {
+    if (turbineOptions.shouldReduceClassPath()) {
       // compile with reduced classpath
       actualClasspath = compressedClasspath;
       requestBuilder.setClassPath(asPaths(actualClasspath));
@@ -201,7 +201,8 @@ public class JavacTurbine implements AutoCloseable {
       }
     }
 
-    if (!compileResult.success() && hasRecognizedError(compileResult.output())) {
+    if (compileResult == null
+        || (!compileResult.success() && hasRecognizedError(compileResult.output()))) {
       // fall back to transitive classpath
       actualClasspath = originalClasspath;
       requestBuilder.setClassPath(asPaths(actualClasspath));
@@ -214,8 +215,7 @@ public class JavacTurbine implements AutoCloseable {
 
     if (result.ok()) {
       emitClassJar(Paths.get(turbineOptions.outputFile()), compileResult.files());
-      dependencyModule.emitDependencyInformation(
-          CLASSPATH_JOINER.join(actualClasspath), compileResult.success());
+      dependencyModule.emitDependencyInformation(actualClasspath, compileResult.success());
     } else {
       out.print(compileResult.output());
     }
@@ -229,6 +229,7 @@ public class JavacTurbine implements AutoCloseable {
             .setReduceClasspath()
             .setTargetLabel(turbineOptions.targetLabel().orNull())
             .addDepsArtifacts(turbineOptions.depsArtifacts())
+            .setPlatformJars(turbineOptions.bootClassPath())
             .setStrictJavaDeps(strictDepsMode.toString())
             .addDirectMappings(parseJarsToTargets(turbineOptions.directJarsToTargets()))
             .addIndirectMappings(parseJarsToTargets(turbineOptions.indirectJarsToTargets()));

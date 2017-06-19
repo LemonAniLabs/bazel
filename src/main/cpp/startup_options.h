@@ -199,8 +199,7 @@ class StartupOptions {
   // empty string if it was not specified on the command line.
   std::string GetExplicitHostJavabase() const;
 
-  // Port for gRPC command server. 0 means let the kernel choose, -1 means no
-  // gRPC command server.
+  // Port to start up the gRPC command server on. If 0, let the kernel choose.
   int command_port;
 
   // Connection timeout for each gRPC connection attempt.
@@ -231,6 +230,10 @@ class StartupOptions {
  private:
   std::string host_javabase;
   std::string default_host_javabase;
+
+#if defined(COMPILER_MSVC) || defined(__CYGWIN__)
+  static std::string WindowsUnixRoot(const std::string &bazel_sh);
+#endif
 };
 
 }  // namespace blaze

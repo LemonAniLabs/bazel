@@ -14,8 +14,7 @@
 package com.google.devtools.build.lib.standalone;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableList;
@@ -39,7 +38,7 @@ import com.google.devtools.build.lib.exec.BlazeExecutor;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.exec.SingleBuildFileCache;
 import com.google.devtools.build.lib.integration.util.IntegrationMock;
-import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
+import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestFileOutErr;
 import com.google.devtools.build.lib.testutil.TestUtils;
 import com.google.devtools.build.lib.util.BlazeClock;
@@ -92,7 +91,7 @@ public class StandaloneSpawnStrategyTest {
     BlazeDirectories directories =
         new BlazeDirectories(outputBase, outputBase, workspaceDir, "mock-product-name");
     // This call implicitly symlinks the integration bin tools into the exec root.
-    IntegrationMock.get().getIntegrationBinTools(directories);
+    IntegrationMock.get().getIntegrationBinTools(directories, TestConstants.WORKSPACE_NAME);
     OptionsParser optionsParser = OptionsParser.newOptionsParser(ExecutionOptions.class);
     optionsParser.parse("--verbose_failures");
 
@@ -101,9 +100,10 @@ public class StandaloneSpawnStrategyTest {
     ResourceManager resourceManager = ResourceManager.instanceForTestingOnly();
     resourceManager.setAvailableResources(
         ResourceSet.create(/*memoryMb=*/1, /*cpuUsage=*/1, /*ioUsage=*/1, /*localTestCount=*/1));
+    Path execRoot = directories.getExecRoot(TestConstants.WORKSPACE_NAME);
     this.executor =
         new BlazeExecutor(
-            directories.getExecRoot(),
+            execRoot,
             reporter,
             bus,
             BlazeClock.instance(),
@@ -112,7 +112,7 @@ public class StandaloneSpawnStrategyTest {
             ImmutableMap.<String, SpawnActionContext>of(
                 "",
                 new StandaloneSpawnStrategy(
-                    directories.getExecRoot(), false, "mock-product-name", resourceManager)),
+                    execRoot, false, "mock-product-name", resourceManager)),
             ImmutableList.<ActionContextProvider>of());
 
     executor.getExecRoot().createDirectory();
@@ -164,8 +164,9 @@ public class StandaloneSpawnStrategyTest {
       run(createSpawn(getFalseCommand()));
       fail();
     } catch (ExecException e) {
-      assertTrue("got: " + e.getMessage(), e
-          .getMessage().startsWith("false failed: error executing command"));
+      assertWithMessage("got: " + e.getMessage())
+          .that(e.getMessage().startsWith("false failed: error executing command"))
+          .isTrue();
     }
   }
 
@@ -181,7 +182,7 @@ public class StandaloneSpawnStrategyTest {
   public void testBinEchoPrintsArguments() throws Exception {
     Spawn spawn = createSpawn("/bin/echo", "Hello,", "world.");
     run(spawn);
-    assertEquals("Hello, world.\n", out());
+    assertThat(out()).isEqualTo("Hello, world.\n");
     assertThat(err()).isEmpty();
   }
 
@@ -189,7 +190,7 @@ public class StandaloneSpawnStrategyTest {
   public void testCommandRunsInWorkingDir() throws Exception {
     Spawn spawn = createSpawn("/bin/pwd");
     run(spawn);
-    assertEquals(executor.getExecRoot() + "\n", out());
+    assertThat(out()).isEqualTo(executor.getExecRoot() + "\n");
   }
 
   @Test
@@ -200,37 +201,14 @@ public class StandaloneSpawnStrategyTest {
         new ActionsTestUtil.NullAction(),
         ResourceSet.ZERO);
     run(spawn);
-    assertEquals(Sets.newHashSet("foo=bar", "baz=boo"), Sets.newHashSet(out().split("\n")));
+    assertThat(Sets.newHashSet(out().split("\n"))).isEqualTo(Sets.newHashSet("foo=bar", "baz=boo"));
   }
 
   @Test
   public void testStandardError() throws Exception {
     Spawn spawn = createSpawn("/bin/sh", "-c", "echo Oops! >&2");
     run(spawn);
-    assertEquals("Oops!\n", err());
+    assertThat(err()).isEqualTo("Oops!\n");
     assertThat(out()).isEmpty();
-  }
-
-  // Test an action with environment variables set indicating an action running on a darwin host
-  // system. Such actions should fail given the fact that these tests run on a non darwin
-  // architecture.
-  @Test
-  public void testIOSEnvironmentOnNonDarwin() throws Exception {
-    if (OS.getCurrent() == OS.DARWIN) {
-      return;
-    }
-    Spawn spawn = new BaseSpawn.Local(
-        Arrays.asList("/bin/sh", "-c", "echo $SDKROOT"),
-        ImmutableMap.<String, String>of(AppleConfiguration.APPLE_SDK_VERSION_ENV_NAME, "8.4",
-            AppleConfiguration.APPLE_SDK_PLATFORM_ENV_NAME, "iPhoneSimulator"),
-        new ActionsTestUtil.NullAction(),
-        ResourceSet.ZERO);
-
-    try {
-      run(spawn);
-      fail("action should fail due to being unable to resolve SDKROOT");
-    } catch (ExecException e) {
-      assertThat(e.getMessage()).contains("Cannot locate iOS SDK on non-darwin operating system");
-    }
   }
 }

@@ -29,6 +29,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.SpecialInputsHandler;
 import com.google.devtools.build.lib.util.FileType;
@@ -54,13 +55,14 @@ public class CppCompileActionBuilder {
   private final BuildConfiguration configuration;
   private final List<String> features = new ArrayList<>();
   private CcToolchainFeatures.FeatureConfiguration featureConfiguration;
-  private CcToolchainFeatures.Variables variables;
+  private CcToolchainFeatures.Variables variables = Variables.EMPTY;
   private Artifact sourceFile;
   private final Label sourceLabel;
   private final NestedSetBuilder<Artifact> mandatoryInputsBuilder;
   private Artifact optionalSourceFile;
   private Artifact outputFile;
   private Artifact dwoFile;
+  private Artifact ltoIndexingFile;
   private PathFragment tempOutputFile;
   private DotdFile dotdFile;
   private Artifact gcnoFile;
@@ -168,6 +170,7 @@ public class CppCompileActionBuilder {
     this.optionalSourceFile = other.optionalSourceFile;
     this.outputFile = other.outputFile;
     this.dwoFile = other.dwoFile;
+    this.ltoIndexingFile = other.ltoIndexingFile;
     this.tempOutputFile = other.tempOutputFile;
     this.dotdFile = other.dotdFile;
     this.gcnoFile = other.gcnoFile;
@@ -382,8 +385,8 @@ public class CppCompileActionBuilder {
           ImmutableList.copyOf(copts),
           getNocoptPredicate(nocopts),
           getLipoScannables(realMandatoryInputs),
-          ccToolchain.getBuiltinIncludeFiles(),
           cppSemantics,
+          ccToolchain,
           ImmutableMap.copyOf(executionInfo));
     } else {
       return new CppCompileAction(
@@ -404,6 +407,7 @@ public class CppCompileActionBuilder {
           dotdFile,
           gcnoFile,
           dwoFile,
+          ltoIndexingFile,
           optionalSourceFile,
           localShellEnvironment,
           cppConfiguration,
@@ -418,8 +422,8 @@ public class CppCompileActionBuilder {
           ImmutableMap.copyOf(executionInfo),
           ImmutableMap.copyOf(environment),
           getActionName(),
-          ccToolchain.getBuiltinIncludeFiles(),
-          cppSemantics);
+          cppSemantics,
+          ccToolchain);
     }
   }
 
@@ -474,7 +478,7 @@ public class CppCompileActionBuilder {
         continue;
       }
       // One starting ../ is okay for getting to a sibling repository.
-      if (include.startsWith(PathFragment.create(Label.EXTERNAL_PATH_PREFIX))) {
+      if (include.startsWith(Label.EXTERNAL_PATH_PREFIX)) {
         include = include.relativeTo(Label.EXTERNAL_PATH_PREFIX);
       }
       if (include.isAbsolute()
@@ -602,6 +606,15 @@ public class CppCompileActionBuilder {
 
   public CppCompileActionBuilder setDwoFile(Artifact dwoFile) {
     this.dwoFile = dwoFile;
+    return this;
+  }
+
+  /**
+   * Set the minimized bitcode file emitted by this (ThinLTO) compilation that can be used in place
+   * of the full bitcode outputFile in the LTO indexing step.
+   */
+  public CppCompileActionBuilder setLTOIndexingFile(Artifact ltoIndexingFile) {
+    this.ltoIndexingFile = ltoIndexingFile;
     return this;
   }
 

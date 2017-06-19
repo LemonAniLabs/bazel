@@ -17,8 +17,12 @@ package com.google.devtools.build.lib.runtime;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
+import com.google.common.collect.ImmutableList;
+import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
+import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.UseDefault;
 import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.ExpansionFunction;
+import com.google.devtools.common.options.InvocationPolicyEnforcer;
 import com.google.devtools.common.options.IsolatedOptionsData;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionsBase;
@@ -82,8 +86,8 @@ public class AllIncompatibleChangesExpansionTest {
     /** Dummy comment (linter suppression) */
     public static class YExpansion implements ExpansionFunction {
       @Override
-      public String[] getExpansion(IsolatedOptionsData optionsData) {
-        return new String[] {"--noY"};
+      public ImmutableList<String> getExpansion(IsolatedOptionsData optionsData) {
+        return ImmutableList.of("--noY");
       }
     }
 
@@ -144,6 +148,30 @@ public class AllIncompatibleChangesExpansionTest {
     assertThat(opts.incompatibleB).isTrue();
   }
 
+  @Test
+  public void invocationPolicy() throws OptionsParsingException {
+    // Check that all-expansion behaves just like any other expansion flag and can be filtered
+    // by invocation policy.
+    InvocationPolicy.Builder invocationPolicyBuilder = InvocationPolicy.newBuilder();
+    invocationPolicyBuilder.addFlagPoliciesBuilder()
+        .setFlagName("incompatible_A")
+        .setUseDefault(UseDefault.getDefaultInstance())
+        .build();
+    InvocationPolicy policy = invocationPolicyBuilder.build();
+    InvocationPolicyEnforcer enforcer = new InvocationPolicyEnforcer(policy);
+
+    OptionsParser parser =
+        OptionsParser.newOptionsParser(ExampleOptions.class);
+    parser.parse("--all");
+    enforcer.enforce(parser);
+
+    ExampleOptions opts = parser.getOptions(ExampleOptions.class);
+    assertThat(opts.x).isFalse();
+    assertThat(opts.y).isTrue();
+    assertThat(opts.incompatibleA).isFalse(); // A should have been removed from the expansion.
+    assertThat(opts.incompatibleB).isTrue(); // B, without a policy, should have been left alone.
+  }
+
   // There's no unit test to check that the expansion of --all is sorted. IsolatedOptionsData is not
   // exposed from OptionsParser, making it difficult to check, and it's not clear that exposing it
   // would be worth it.
@@ -159,7 +187,7 @@ public class AllIncompatibleChangesExpansionTest {
       OptionsParser.newOptionsParser(ExampleOptions.class, optionsBaseClass);
       fail("Should have failed with message \"" + message + "\"");
     } catch (OptionsParser.ConstructionException e) {
-      assertThat(e.getMessage()).contains(message);
+      assertThat(e).hasMessageThat().contains(message);
     }
   }
 

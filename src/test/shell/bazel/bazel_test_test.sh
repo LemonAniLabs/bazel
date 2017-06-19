@@ -236,7 +236,7 @@ EOF
 
   bazel test --test_timeout=2 //dir:test &> $TEST_log && fail "should have timed out"
   expect_log "TIMEOUT"
-  bazel test --test_timeout=20 //dir:test || fail "expected success"
+  bazel test --test_timeout=20 //dir:test &> $TEST_log || fail "expected success"
 }
 
 # Makes sure that runs_per_test_detects_flakes detects FLAKY if any of the 5
@@ -444,4 +444,4 @@ EOF
   assert_equals "fail" "$(sed -n '3p' < bazel-testlogs/fail/test.log)"
 }
 
-run_suite "test tests"
+run_suite "bazel test tests"

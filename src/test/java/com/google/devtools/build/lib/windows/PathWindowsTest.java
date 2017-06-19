@@ -14,8 +14,6 @@
 package com.google.devtools.build.lib.windows;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertSame;
 
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
@@ -77,14 +75,14 @@ public class PathWindowsTest {
   }
 
   private void assertAsFragmentWorks(String expected) {
-    assertEquals(new PathFragment(expected), filesystem.getPath(expected).asFragment());
+    assertThat(filesystem.getPath(expected).asFragment()).isEqualTo(PathFragment.create(expected));
   }
 
   @Test
   public void testWindowsPath() {
     Path p = filesystem.getPath("C:/foo/bar");
-    assertEquals("C:/foo/bar", p.getPathString());
-    assertEquals("C:/foo/bar", p.toString());
+    assertThat(p.getPathString()).isEqualTo("C:/foo/bar");
+    assertThat(p.toString()).isEqualTo("C:/foo/bar");
   }
 
   @Test
@@ -99,29 +97,29 @@ public class PathWindowsTest {
   @Test
   public void testGetRelativeWithFragmentWindows() {
     Path dir = filesystem.getPath("C:/first/x");
-    assertEquals("C:/first/x/y", dir.getRelative(new PathFragment("y")).toString());
-    assertEquals("C:/first/x/x", dir.getRelative(new PathFragment("./x")).toString());
-    assertEquals("C:/first/y", dir.getRelative(new PathFragment("../y")).toString());
-    assertEquals("C:/first/y", dir.getRelative(new PathFragment("../y")).toString());
-    assertEquals("C:/y", dir.getRelative(new PathFragment("../../../y")).toString());
+    assertThat(dir.getRelative(PathFragment.create("y")).toString()).isEqualTo("C:/first/x/y");
+    assertThat(dir.getRelative(PathFragment.create("./x")).toString()).isEqualTo("C:/first/x/x");
+    assertThat(dir.getRelative(PathFragment.create("../y")).toString()).isEqualTo("C:/first/y");
+    assertThat(dir.getRelative(PathFragment.create("../y")).toString()).isEqualTo("C:/first/y");
+    assertThat(dir.getRelative(PathFragment.create("../../../y")).toString()).isEqualTo("C:/y");
   }
 
   @Test
   public void testGetRelativeWithAbsoluteFragmentWindows() {
     Path x = filesystem.getPath("C:/first/x");
-    assertEquals("C:/x/y", x.getRelative(new PathFragment("C:/x/y")).toString());
+    assertThat(x.getRelative(PathFragment.create("C:/x/y")).toString()).isEqualTo("C:/x/y");
   }
 
   @Test
   public void testGetRelativeWithAbsoluteStringWorksWindows() {
     Path x = filesystem.getPath("C:/first/x");
-    assertEquals("C:/x/y", x.getRelative("C:/x/y").toString());
+    assertThat(x.getRelative("C:/x/y").toString()).isEqualTo("C:/x/y");
   }
 
   @Test
   public void testParentOfRootIsRootWindows() {
-    assertSame(root, root.getRelative(".."));
-    assertSame(root.getRelative("dots"), root.getRelative("broken/../../dots"));
+    assertThat(root).isSameAs(root.getRelative(".."));
+    assertThat(root.getRelative("dots")).isSameAs(root.getRelative("broken/../../dots"));
   }
 
   @Test
@@ -290,37 +288,43 @@ public class PathWindowsTest {
   @Test
   public void testCaseInsensitivePathFragment() {
     // equals
-    assertThat(new PathFragment("c:/FOO/BAR")).isEqualTo(new PathFragment("c:\\foo\\bar"));
-    assertThat(new PathFragment("c:/FOO/BAR")).isNotEqualTo(new PathFragment("d:\\foo\\bar"));
-    assertThat(new PathFragment("c:/FOO/BAR")).isNotEqualTo(new PathFragment("/foo/bar"));
+    assertThat(PathFragment.create("c:/FOO/BAR")).isEqualTo(PathFragment.create("c:\\foo\\bar"));
+    assertThat(PathFragment.create("c:/FOO/BAR")).isNotEqualTo(PathFragment.create("d:\\foo\\bar"));
+    assertThat(PathFragment.create("c:/FOO/BAR")).isNotEqualTo(PathFragment.create("/foo/bar"));
     // equals for the string representation
-    assertThat(new PathFragment("c:/FOO/BAR").toString())
-        .isNotEqualTo(new PathFragment("c:/foo/bar").toString());
+    assertThat(PathFragment.create("c:/FOO/BAR").toString())
+        .isNotEqualTo(PathFragment.create("c:/foo/bar").toString());
     // hashCode
-    assertThat(new PathFragment("c:/FOO/BAR").hashCode())
-        .isEqualTo(new PathFragment("c:\\foo\\bar").hashCode());
-    assertThat(new PathFragment("c:/FOO/BAR").hashCode())
-        .isNotEqualTo(new PathFragment("d:\\foo\\bar").hashCode());
-    assertThat(new PathFragment("c:/FOO/BAR").hashCode())
-        .isNotEqualTo(new PathFragment("/foo/bar").hashCode());
+    assertThat(PathFragment.create("c:/FOO/BAR").hashCode())
+        .isEqualTo(PathFragment.create("c:\\foo\\bar").hashCode());
+    assertThat(PathFragment.create("c:/FOO/BAR").hashCode())
+        .isNotEqualTo(PathFragment.create("d:\\foo\\bar").hashCode());
+    assertThat(PathFragment.create("c:/FOO/BAR").hashCode())
+        .isNotEqualTo(PathFragment.create("/foo/bar").hashCode());
     // compareTo
-    assertThat(new PathFragment("c:/FOO/BAR").compareTo(new PathFragment("c:\\foo\\bar")))
+    assertThat(PathFragment.create("c:/FOO/BAR").compareTo(PathFragment.create("c:\\foo\\bar")))
         .isEqualTo(0);
-    assertThat(new PathFragment("c:/FOO/BAR").compareTo(new PathFragment("d:\\foo\\bar")))
+    assertThat(PathFragment.create("c:/FOO/BAR").compareTo(PathFragment.create("d:\\foo\\bar")))
         .isLessThan(0);
-    assertThat(new PathFragment("c:/FOO/BAR").compareTo(new PathFragment("/foo/bar")))
+    assertThat(PathFragment.create("c:/FOO/BAR").compareTo(PathFragment.create("/foo/bar")))
         .isGreaterThan(0);
     // startsWith
-    assertThat(new PathFragment("c:/FOO/BAR").startsWith(new PathFragment("c:\\foo"))).isTrue();
-    assertThat(new PathFragment("c:/FOO/BAR").startsWith(new PathFragment("d:\\foo"))).isFalse();
+    assertThat(PathFragment.create("c:/FOO/BAR").startsWith(PathFragment.create("c:\\foo")))
+        .isTrue();
+    assertThat(PathFragment.create("c:/FOO/BAR").startsWith(PathFragment.create("d:\\foo")))
+        .isFalse();
     // endsWith
-    assertThat(new PathFragment("c:/FOO/BAR/BAZ").endsWith(new PathFragment("bar\\baz"))).isTrue();
-    assertThat(new PathFragment("c:/FOO/BAR/BAZ").endsWith(new PathFragment("/bar/baz"))).isFalse();
-    assertThat(new PathFragment("c:/FOO/BAR/BAZ").endsWith(new PathFragment("d:\\bar\\baz")))
+    assertThat(PathFragment.create("c:/FOO/BAR/BAZ").endsWith(PathFragment.create("bar\\baz")))
+        .isTrue();
+    assertThat(PathFragment.create("c:/FOO/BAR/BAZ").endsWith(PathFragment.create("/bar/baz")))
+        .isFalse();
+    assertThat(PathFragment.create("c:/FOO/BAR/BAZ").endsWith(PathFragment.create("d:\\bar\\baz")))
         .isFalse();
     // relativeTo
-    assertThat(new PathFragment("c:/FOO/BAR/BAZ/QUX").relativeTo(new PathFragment("c:\\foo\\bar")))
-        .isEqualTo(new PathFragment("Baz/Qux"));
+    assertThat(
+            PathFragment.create("c:/FOO/BAR/BAZ/QUX")
+                .relativeTo(PathFragment.create("c:\\foo\\bar")))
+        .isEqualTo(PathFragment.create("Baz/Qux"));
   }
 
   @Test
@@ -330,9 +334,9 @@ public class PathWindowsTest {
     Path child = filesystem.getPath("C:\\FOO\\Bar\\baz");
     assertThat(child).isInstanceOf(WindowsPath.class);
     assertThat(child.startsWith(ancestor)).isTrue();
-    assertThat(child.relativeTo(ancestor)).isEqualTo(new PathFragment("baz"));
+    assertThat(child.relativeTo(ancestor)).isEqualTo(PathFragment.create("baz"));
     RootedPath actual = RootedPath.toRootedPath(ancestor, child);
     assertThat(actual.getRoot()).isEqualTo(ancestor);
-    assertThat(actual.getRelativePath()).isEqualTo(new PathFragment("baz"));
+    assertThat(actual.getRelativePath()).isEqualTo(PathFragment.create("baz"));
   }
 }

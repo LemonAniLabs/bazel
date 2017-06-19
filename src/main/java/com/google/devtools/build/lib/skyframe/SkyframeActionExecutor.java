@@ -33,7 +33,6 @@ import com.google.devtools.build.lib.actions.ActionExecutionStatusReporter;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ActionInputFileCache;
-import com.google.devtools.build.lib.actions.ActionInputHelper;
 import com.google.devtools.build.lib.actions.ActionLogBufferPathGenerator;
 import com.google.devtools.build.lib.actions.ActionLookupData;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
@@ -48,11 +47,12 @@ import com.google.devtools.build.lib.actions.ArtifactPrefixConflictException;
 import com.google.devtools.build.lib.actions.CachedActionEvent;
 import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.Executor;
+import com.google.devtools.build.lib.actions.Executor.ActionContext;
 import com.google.devtools.build.lib.actions.MapBasedActionGraph;
 import com.google.devtools.build.lib.actions.MutableActionGraph;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
-import com.google.devtools.build.lib.actions.PackageRootResolutionException;
+import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit.ActionCachedContext;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.TargetOutOfDateException;
 import com.google.devtools.build.lib.actions.cache.MetadataHandler;
@@ -61,6 +61,7 @@ import com.google.devtools.build.lib.concurrent.ExecutorUtil;
 import com.google.devtools.build.lib.concurrent.Sharder;
 import com.google.devtools.build.lib.concurrent.ThrowableRecordingRunnableWrapper;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.OutputService;
 import com.google.devtools.build.lib.profiler.Profiler;
@@ -488,7 +489,28 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
 
       if (action instanceof NotifyOnActionCacheHit) {
         NotifyOnActionCacheHit notify = (NotifyOnActionCacheHit) action;
-        notify.actionCacheHit(executorEngine);
+        ActionCachedContext context = new ActionCachedContext() {
+          @Override
+          public EventHandler getEventHandler() {
+            return executorEngine.getEventHandler();
+          }
+
+          @Override
+          public EventBus getEventBus() {
+            return executorEngine.getEventBus();
+          }
+
+          @Override
+          public Path getExecRoot() {
+            return executorEngine.getExecRoot();
+          }
+
+          @Override
+          public <T extends ActionContext> T getContext(Class<? extends T> type) {
+            return executorEngine.getContext(type);
+          }
+        };
+        notify.actionCacheHit(context);
       }
 
       // We still need to check the outputs so that output file data is available to the value.
@@ -525,7 +547,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
 
   @Nullable
   Iterable<Artifact> getActionCachedInputs(Action action, PackageRootResolver resolver)
-      throws PackageRootResolutionException, InterruptedException {
+      throws InterruptedException {
     return actionCacheChecker.getCachedInputs(action, resolver);
   }
 
@@ -810,14 +832,6 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
           reportError("not all outputs were created or valid", null, action,
               outputAlreadyDumped ? null : fileOutErr);
         }
-        // Prevent accidental stomping on files.
-        // This will also throw a FileNotFoundException
-        // if any of the output files doesn't exist.
-        try {
-          setOutputsReadOnlyAndExecutable(action, metadataHandler);
-        } catch (IOException e) {
-          reportError("failed to set outputs read-only", e, action, null);
-        }
       } finally {
         profiler.completeTask(ProfilerTask.ACTION_COMPLETE);
       }
@@ -840,68 +854,6 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       reportActionExecution(action,
           new ActionExecutionException(exception, action, true), fileOutErr);
       throw exception;
-    }
-  }
-
-  private static void setPathReadOnlyAndExecutable(MetadataHandler metadataHandler,
-      Artifact artifact)
-      throws IOException {
-    // If the metadata was injected, we assume the mode is set correct and bail out early to avoid
-    // the additional overhead of resetting it.
-    if (metadataHandler.isInjected(artifact)) {
-      return;
-    }
-    Path path = artifact.getPath();
-    if (path.isFile(Symlinks.NOFOLLOW)) { // i.e. regular files only.
-      // We trust the files created by the execution-engine to be non symlinks with expected
-      // chmod() settings already applied.
-      path.chmod(0555);  // Sets the file read-only and executable.
-    }
-  }
-
-  private static void setTreeReadOnlyAndExecutable(MetadataHandler metadataHandler, Artifact parent,
-      PathFragment subpath) throws IOException {
-    Path path = parent.getPath().getRelative(subpath);
-    if (path.isDirectory()) {
-      path.chmod(0555);
-      for (Path child : path.getDirectoryEntries()) {
-        setTreeReadOnlyAndExecutable(metadataHandler, parent,
-            subpath.getChild(child.getBaseName()));
-      }
-    } else {
-      setPathReadOnlyAndExecutable(
-          metadataHandler, ActionInputHelper.treeFileArtifact(parent, subpath));
-    }
-  }
-
-  /**
-   * For each of the action's outputs that is a regular file (not a symbolic link or directory),
-   * make it read-only and executable.
-   *
-   * <p>Making the outputs read-only helps preventing accidental editing of them (e.g. in case of
-   * generated source code), while making them executable helps running generated files (such as
-   * generated shell scripts) on the command line.
-   *
-   * <p>May execute in a worker thread.
-   *
-   * <p>Note: setting these bits maintains transparency regarding the locality of the build; because
-   * the remote execution engine sets them, they should be set for local builds too.
-   *
-   * @throws IOException if an I/O error occurred.
-   */
-  private static void setOutputsReadOnlyAndExecutable(
-      Action action, MetadataHandler metadataHandler) throws IOException {
-    Preconditions.checkState(!action.getActionType().isMiddleman());
-
-    for (Artifact output : action.getOutputs()) {
-      if (output.isTreeArtifact()) {
-        // Preserve existing behavior: we don't set non-TreeArtifact directories
-        // read only and executable. However, it's unusual for non-TreeArtifact outputs
-        // to be directories.
-        setTreeReadOnlyAndExecutable(metadataHandler, output, PathFragment.EMPTY_FRAGMENT);
-      } else {
-        setPathReadOnlyAndExecutable(metadataHandler, output);
-      }
     }
   }
 
@@ -943,7 +895,8 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
   }
 
   /**
-   * Validates that all action outputs were created or intentionally omitted.
+   * Validates that all action outputs were created or intentionally omitted. This can result in
+   * chmod calls on the output files; see {@link ActionMetadataHandler}.
    *
    * @return false if some outputs are missing, true - otherwise.
    */
@@ -953,7 +906,7 @@ public final class SkyframeActionExecutor implements ActionExecutionContextFacto
       // artifactExists has the side effect of potentially adding the artifact to the cache,
       // therefore we only call it if we know the artifact is indeed not omitted to avoid any
       // unintended side effects.
-      if (!(metadataHandler.artifactOmitted(output))) {
+      if (!metadataHandler.artifactOmitted(output)) {
         try {
           metadataHandler.getMetadata(output);
         } catch (IOException e) {

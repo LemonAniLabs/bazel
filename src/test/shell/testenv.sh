@@ -45,7 +45,11 @@ if is_windows; then
 
   export JAVA_HOME="$(ls -d C:/Program\ Files/Java/jdk* | sort | tail -n 1)"
   export BAZEL_SH="c:/tools/msys64/usr/bin/bash.exe"
-  export BAZEL_VC="c:/Program Files (x86)/Microsoft Visual Studio 14.0/VC"
+  export BAZEL_VC="c:/Program Files (x86)/Microsoft Visual Studio/2017/Professional/VC"
+  if [ ! -d "$BAZEL_VC" ]; then
+    # OK, well, maybe Visual C++ 2015 then?
+    export BAZEL_VC="c:/Program Files (x86)/Microsoft Visual Studio 14.0/VC"
+  fi
   if [ -x /c/Python27/python.exe ]; then
     export BAZEL_PYTHON="C:/Python27/python.exe"
     export PATH="/c/Python27:$PATH"
@@ -292,12 +296,10 @@ function setup_android_sdk_support() {
   for i in $SDK_SRCDIR/*; do
     ln -s "$i" "$ANDROID_SDK/$(basename $i)"
   done
-  ANDROID_SDK_API_LEVEL=$(ls $SDK_SRCDIR/platforms | cut -d '-' -f 2 | sort -n | tail -1)
 cat >> WORKSPACE <<EOF
 android_sdk_repository(
     name = "androidsdk",
     path = "$ANDROID_SDK",
-    api_level = $ANDROID_SDK_API_LEVEL,
 )
 EOF
 }
@@ -311,12 +313,10 @@ function setup_android_ndk_support() {
       ln -s "$i" "$ANDROID_NDK/$(basename $i)"
     fi
   done
-  ANDROID_NDK_API_LEVEL=$(ls $NDK_SRCDIR/platforms | cut -d '-' -f 2 | sort -n | tail -1)
   cat >> WORKSPACE <<EOF
 android_ndk_repository(
     name = "androidndk",
     path = "$ANDROID_NDK",
-    api_level = $ANDROID_NDK_API_LEVEL,
 )
 EOF
 }
@@ -381,8 +381,8 @@ function create_new_workspace() {
 
   copy_tools_directory
 
-  [ -e third_party/java/jdk/langtools/javac-9-dev-r3297-4.jar ] \
-    || ln -s "${langtools_path}"  third_party/java/jdk/langtools/javac-9-dev-r3297-4.jar
+  [ -e third_party/java/jdk/langtools/javac-9-dev-r4023-2.jar ] \
+    || ln -s "${langtools_path}"  third_party/java/jdk/langtools/javac-9-dev-r4023-2.jar
 
   touch WORKSPACE
 }
@@ -429,7 +429,18 @@ function cleanup_workspace() {
 # Clean-up the bazel install base
 function cleanup() {
   if [ -d "${BAZEL_INSTALL_BASE:-__does_not_exists__}" ]; then
-    rm -fr "${BAZEL_INSTALL_BASE}"
+    # Windows takes its time to shut down Bazel and we can't delete A-server.jar
+    # until then, so just give it time and keep trying for 2 minutes.
+    for i in {1..120}; do
+      if rm -fr "${BAZEL_INSTALL_BASE}" ; then
+        break
+      fi
+      if (( $i == 10 )) || (( $i == 30 )) || (( $i == 60 )) ; then
+        echo "Test cleanup: couldn't delete ${BAZEL_INSTALL_BASE} \ after $i seconds"
+        echo "(Timeout in $((120-$i)) seconds.)"
+        sleep 1
+      fi
+    done
   fi
 }
 

@@ -14,9 +14,6 @@
 package com.google.devtools.build.lib.syntax;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
@@ -322,6 +319,20 @@ public class EvaluationTest extends EvaluationTestCase {
   }
 
   @Test
+  public void testFloorDivision() throws Exception {
+    newTest()
+        .testStatement("6 // 2", 3)
+        .testStatement("6 // 4", 1)
+        .testStatement("3 // 6", 0)
+        .testStatement("7 // -2", -4)
+        .testStatement("-7 // 2", -4)
+        .testStatement("-7 // -2", 3)
+        .testStatement("2147483647 // 2", 1073741823)
+        .testIfErrorContains("unsupported operand type(s) for /: 'string' and 'int'", "'str' / 2")
+        .testIfExactError("integer division by zero", "5 // 0");
+  }
+
+  @Test
   public void testOperatorPrecedence() throws Exception {
     newTest()
         .testStatement("2 + 3 * 4", 14)
@@ -341,13 +352,13 @@ public class EvaluationTest extends EvaluationTestCase {
     // list
     Object x = eval("[1,2] + [3,4]");
     assertThat((Iterable<Object>) x).containsExactly(1, 2, 3, 4).inOrder();
-    assertEquals(MutableList.of(env, 1, 2, 3, 4), x);
-    assertFalse(EvalUtils.isImmutable(x));
+    assertThat(x).isEqualTo(MutableList.of(env, 1, 2, 3, 4));
+    assertThat(EvalUtils.isImmutable(x)).isFalse();
 
     // tuple
     x = eval("(1,2) + (3,4)");
-    assertEquals(Tuple.of(1, 2, 3, 4), x);
-    assertTrue(EvalUtils.isImmutable(x));
+    assertThat(x).isEqualTo(Tuple.of(1, 2, 3, 4));
+    assertThat(EvalUtils.isImmutable(x)).isTrue();
 
     checkEvalError("unsupported operand type(s) for +: 'tuple' and 'list'",
         "(1,2) + [3,4]"); // list + tuple
@@ -519,10 +530,10 @@ public class EvaluationTest extends EvaluationTestCase {
 
   @Test
   public void testDictComprehensions_ToString() throws Exception {
-    assertEquals("{x: x for x in [1, 2]}",
-        parseExpression("{x : x for x in [1, 2]}").toString());
-    assertEquals("{x + \"a\": x for x in [1, 2]}",
-        parseExpression("{x + 'a' : x for x in [1, 2]}").toString());
+    assertThat(parseExpression("{x : x for x in [1, 2]}").toString())
+        .isEqualTo("{x: x for x in [1, 2]}");
+    assertThat(parseExpression("{x + 'a' : x for x in [1, 2]}").toString())
+        .isEqualTo("{x + \"a\": x for x in [1, 2]}");
   }
 
   @Test
@@ -559,7 +570,7 @@ public class EvaluationTest extends EvaluationTestCase {
     // TODO(fwe): cannot be handled by current testing suite
     SelectorList x = (SelectorList) eval("select({'foo': ['FOO'], 'bar': ['BAR']}) + []");
     List<Object> elements = x.getElements();
-    assertThat(elements.size()).isEqualTo(2);
+    assertThat(elements).hasSize(2);
     assertThat(elements.get(0)).isInstanceOf(SelectorValue.class);
     assertThat((Iterable<Object>) elements.get(1)).isEmpty();
   }

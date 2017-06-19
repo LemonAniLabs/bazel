@@ -22,6 +22,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
+import com.google.devtools.build.lib.rules.cpp.CppCompileAction;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -235,12 +236,20 @@ public abstract class MockCcSupport {
           + "    flag_group {"
           + "      flag: '-flto=thin'"
           + "    }"
+          + "    flag_group {"
+          + "      expand_if_all_available: 'lto_indexing_bitcode_file'"
+          + "      flag: 'lto_indexing_bitcode=%{lto_indexing_bitcode_file}'"
+          + "    }"
           + "  }"
           + "  flag_set {"
           + "    action: 'lto-indexing'"
           + "    flag_group {"
           + "      flag: 'param_file=%{thinlto_indexing_param_file}'"
           + "      flag: 'prefix_replace=%{thinlto_prefix_replace}'"
+          + "    }"
+          + "    flag_group {"
+          + "      expand_if_all_available: 'thinlto_object_suffix_replace'"
+          + "      flag: 'object_suffix_replace=%{thinlto_object_suffix_replace}'"
           + "    }"
           + "  }"
           + "  flag_set {"
@@ -324,6 +333,24 @@ public abstract class MockCcSupport {
           + "artifact_name_pattern {"
           + "   category_name: 'static_library'"
           + "   pattern: 'foo%{bad_variable}bar'"
+          + "}";
+
+  /**
+   * An action_config for 'c++-module-codegen action using DUMMY_TOOL that doesn't imply any
+   * features.
+   */
+  public static final String INCOMPLETE_MODULE_CODEGEN_ACTION_CONFIG =
+      ""
+          + "action_config {"
+          + "   config_name: '"
+          + CppCompileAction.CPP_MODULE_CODEGEN
+          + "'"
+          + "   action_name: '"
+          + CppCompileAction.CPP_MODULE_CODEGEN
+          + "'"
+          + "   tool {"
+          + "      tool_path: 'DUMMY_TOOL'"
+          + "   }"
           + "}";
 
   public static final String INCOMPLETE_EXECUTABLE_ACTION_CONFIG =

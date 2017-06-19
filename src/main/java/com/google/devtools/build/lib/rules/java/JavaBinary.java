@@ -45,6 +45,7 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.LinkerInput;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
+import com.google.devtools.build.lib.rules.java.JavaConfiguration.OneVersionEnforcementLevel;
 import com.google.devtools.build.lib.rules.java.ProguardHelper.ProguardOutput;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
 import com.google.devtools.build.lib.syntax.Type;
@@ -229,8 +230,8 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
     // Collect the action inputs for the runfiles collector here because we need to access the
     // analysis environment, and that may no longer be safe when the runfiles collector runs.
     Iterable<Artifact> dynamicRuntimeActionInputs =
-        CppHelper.getToolchain(ruleContext, ":cc_toolchain").getDynamicRuntimeLinkInputs();
-
+        CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext)
+            .getDynamicRuntimeLinkInputs();
 
     Iterables.addAll(jvmFlags,
         semantics.getJvmFlags(ruleContext, common.getSrcsArtifacts(), userJvmFlags));
@@ -286,7 +287,7 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
     boolean runProguard = applyProguardIfRequested(
         ruleContext, deployJar, common.getBootClasspath(), mainClass, semantics, filesBuilder);
 
-    if (javaConfig.isEnforceOneVersion()) {
+    if (javaConfig.oneVersionEnforcementLevel() != OneVersionEnforcementLevel.OFF) {
       Artifact oneVersionOutput =
           ruleContext
               .getAnalysisEnvironment()
@@ -300,7 +301,8 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
       OneVersionCheckActionBuilder.build(
           ruleContext,
           transitiveDependencies,
-          oneVersionOutput);
+          oneVersionOutput,
+          javaConfig.oneVersionEnforcementLevel());
     }
     NestedSet<Artifact> filesToBuild = filesBuilder.build();
 

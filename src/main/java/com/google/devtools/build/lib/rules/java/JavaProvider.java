@@ -18,10 +18,10 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.Runfiles;
-import com.google.devtools.build.lib.analysis.SkylarkProviders;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProviderMap;
+import com.google.devtools.build.lib.analysis.TransitiveInfoProviderMapBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.ClassObjectConstructor;
 import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
@@ -132,12 +132,8 @@ public final class JavaProvider extends SkylarkClassObject implements Transitive
     if (provider != null) {
       return provider;
     }
-    SkylarkProviders skylarkProviders = target.getProvider(SkylarkProviders.class);
-    if (skylarkProviders == null) {
-      return null;
-    }
     JavaProvider javaProvider =
-        (JavaProvider) skylarkProviders.getDeclaredProvider(JavaProvider.JAVA_PROVIDER.getKey());
+        (JavaProvider) target.get(JavaProvider.JAVA_PROVIDER.getKey());
     if (javaProvider == null) {
       return null;
     }
@@ -161,7 +157,11 @@ public final class JavaProvider extends SkylarkClassObject implements Transitive
         "transitive_runtime_jars", SkylarkNestedSet.of(
             Artifact.class,
             providers.getProvider(JavaCompilationArgsProvider.class)
-                .getRecursiveJavaCompilationArgs().getRuntimeJars())
+                .getRecursiveJavaCompilationArgs().getRuntimeJars()),
+        "compile_jars", SkylarkNestedSet.of(
+            Artifact.class,
+            providers.getProvider(JavaCompilationArgsProvider.class)
+                .getJavaCompilationArgs().getCompileTimeJars())
     ));
     this.providers = providers;
   }
@@ -170,18 +170,19 @@ public final class JavaProvider extends SkylarkClassObject implements Transitive
    * A Builder for {@link JavaProvider}.
    */
   public static class Builder {
-    TransitiveInfoProviderMap.Builder providerMap;
-   
-    private Builder(TransitiveInfoProviderMap.Builder providerMap) {
+    TransitiveInfoProviderMapBuilder providerMap;
+
+    private Builder(TransitiveInfoProviderMapBuilder providerMap) {
       this.providerMap = providerMap;
     }
 
     public static Builder create() {
-      return new Builder(new TransitiveInfoProviderMap.Builder());
+      return new Builder(new TransitiveInfoProviderMapBuilder());
     }
 
     public static Builder copyOf(JavaProvider javaProvider) {
-      return new Builder(javaProvider.getProviders().toBuilder());
+      return new Builder(
+          new TransitiveInfoProviderMapBuilder().addAll(javaProvider.getProviders()));
     }
 
     public <P extends TransitiveInfoProvider> Builder addProvider(

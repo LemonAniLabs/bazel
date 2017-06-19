@@ -68,8 +68,6 @@ import com.google.devtools.build.lib.query2.engine.FunctionExpression;
 import com.google.devtools.build.lib.query2.engine.KeyExtractor;
 import com.google.devtools.build.lib.query2.engine.MinDepthUniquifier;
 import com.google.devtools.build.lib.query2.engine.OutputFormatterCallback;
-import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryTaskCallable;
-import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryTaskFuture;
 import com.google.devtools.build.lib.query2.engine.QueryEvalResult;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
@@ -390,10 +388,6 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   public QueryEvalResult evaluateQuery(
       QueryExpression expr, ThreadSafeOutputFormatterCallback<Target> callback)
           throws QueryException, InterruptedException, IOException {
-    // Some errors are reported as QueryExceptions and others as ERROR events (if --keep_going). The
-    // result is set to have an error iff there were errors emitted during the query, so we reset
-    // errors here.
-    eventHandler.resetErrors();
     beforeEvaluateQuery();
 
     // SkyQueryEnvironment batches callback invocations using a BatchStreamedCallback, created here
@@ -671,7 +665,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   }
 
   @ThreadSafe
-  Uniquifier<SkyKey> createSkyKeyUniquifier() {
+  protected Uniquifier<SkyKey> createSkyKeyUniquifier() {
     return new UniquifierImpl<>(SkyKeyKeyExtractor.INSTANCE, DEFAULT_THREAD_COUNT);
   }
 
@@ -906,7 +900,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
         @Override
         public Label apply(SkyKey skyKey) {
           SkyFunctionName functionName = skyKey.functionName();
-          if (!functionName.equals(SkyFunctions.TRANSITIVE_TRAVERSAL)) {
+          if (!functionName.equals(Label.TRANSITIVE_TRAVERSAL)) {
             // Skip non-targets.
             return null;
           }

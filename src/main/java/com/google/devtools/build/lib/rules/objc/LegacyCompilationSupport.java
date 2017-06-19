@@ -44,6 +44,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
+import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -56,7 +57,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
-import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions.AppleBitcodeMode;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
@@ -70,6 +70,7 @@ import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 
@@ -144,8 +145,17 @@ public class LegacyCompilationSupport extends CompilationSupport {
       BuildConfiguration buildConfiguration,
       IntermediateArtifacts intermediateArtifacts,
       CompilationAttributes compilationAttributes,
-      boolean useDeps) {
-    super(ruleContext, buildConfiguration, intermediateArtifacts, compilationAttributes, useDeps);
+      boolean useDeps,
+      Map<String, NestedSet<Artifact>> outputGroupCollector,
+      boolean isTestRule) {
+    super(
+        ruleContext,
+        buildConfiguration,
+        intermediateArtifacts,
+        compilationAttributes,
+        useDeps,
+        outputGroupCollector,
+        isTestRule);
   }
 
   @Override
@@ -179,12 +189,12 @@ public class LegacyCompilationSupport extends CompilationSupport {
       ExtraCompileArgs extraCompileArgs,
       Iterable<PathFragment> priorityHeaders,
       Optional<CppModuleMap> moduleMap) {
-    ImmutableList.Builder<Artifact> objFiles = ImmutableList.builder();
+    ImmutableList.Builder<Artifact> objFilesBuilder = ImmutableList.builder();
     ImmutableList.Builder<ObjcHeaderThinningInfo> objcHeaderThinningInfos = ImmutableList.builder();
 
     for (Artifact sourceFile : compilationArtifacts.getSrcs()) {
       Artifact objFile = intermediateArtifacts.objFile(sourceFile);
-      objFiles.add(objFile);
+      objFilesBuilder.add(objFile);
 
       if (objFile.isTreeArtifact()) {
         registerCompileActionTemplate(
@@ -212,7 +222,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
     }
     for (Artifact nonArcSourceFile : compilationArtifacts.getNonArcSrcs()) {
       Artifact objFile = intermediateArtifacts.objFile(nonArcSourceFile);
-      objFiles.add(objFile);
+      objFilesBuilder.add(objFile);
       if (objFile.isTreeArtifact()) {
         registerCompileActionTemplate(
             nonArcSourceFile,
@@ -238,10 +248,15 @@ public class LegacyCompilationSupport extends CompilationSupport {
       }
     }
 
-    objFiles.addAll(compilationArtifacts.getPrecompiledSrcs());
+    objFilesBuilder.addAll(compilationArtifacts.getPrecompiledSrcs());
+
+    ImmutableList<Artifact> objFiles = objFilesBuilder.build();
+    outputGroupCollector.put(
+        OutputGroupProvider.FILES_TO_COMPILE,
+        NestedSetBuilder.<Artifact>stableOrder().addAll(objFiles).build());
 
     for (Artifact archive : compilationArtifacts.getArchive().asSet()) {
-      registerArchiveActions(objFiles.build(), archive);
+      registerArchiveActions(objFiles, archive);
     }
 
     registerHeaderScanningActions(
@@ -673,12 +688,9 @@ public class LegacyCompilationSupport extends CompilationSupport {
       commandLine.add(CLANG);
     }
 
-    // Do not perform code stripping on tests because XCTest binary is linked not as an executable
-    // but as a bundle without any entry point.
-    boolean isTestTarget = TargetUtils.isTestRule(ruleContext.getRule());
-    // TODO(b/36562173): Replace the "!isTestTarget" condition with the presence of "-bundle" in
+    // TODO(b/36562173): Replace the "!isTestRule" condition with the presence of "-bundle" in
     // the command line.
-    if (objcConfiguration.shouldStripBinary() && !isTestTarget) {
+    if (objcConfiguration.shouldStripBinary() && !isTestRule) {
       commandLine.add("-dead_strip").add("-no_dead_strip_inits_and_terms");
     }
 
